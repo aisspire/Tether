@@ -18,7 +18,7 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 `build.cmd` 调用同目录的 `build.ps1` 并透传参数，CMD 与 PowerShell 均可使用；例如 `build.cmd -DebugBuild`。从 Oriel 父仓库可执行 `plugins\external\tether\build.cmd`，脚本会自动定位 Tether 目录。父仓库根目录的 `build.cmd` 只打包 Oriel，不会打包或安装 Tether。
 
-构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`dist/`、`plugin.json`、`oriel.ps1`。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
+构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
 
 `serve` 输出一行 JSON，包含实际后台身份和 `pageUrl`。在浏览器打开该地址即可添加主机、规则和计划；后台运行期间可关闭页面，转发继续。终端按 Ctrl+C 退出后台会停止托管连接。只监听随机 IPv4 回环端口，不改变系统代理。
 
@@ -49,11 +49,11 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 PowerShell 不同版本对原生命令 JSON 引号的处理不同；自动化调用优先使用下面的 stdio 契约。所有命令均可加 `--data-dir`，仅操作该实例。
 
-在支持 `local-service-v1` 的 Oriel 中登记交付目录即可。`oriel.ps1` 仅包装 `serve --oriel-stdio`；不会自动安装或更新。依赖页面通过 `prerequisites: [{"pluginId":"tether","ruleId":"..."}]` 引用规则。宿主确认就绪后创建页面；切换、隐藏和关闭页面保留转发，完整退出则清理接入实例的全部 Tether 托管转发。
+在支持本轮插件扩展的 Oriel 中，将完整交付文件夹放入设置显示的默认插件读取目录，点击“重新加载接入”即可发现；也可设置额外读取目录或沿用单独登记。声明选择 `application` 工具布局，Oriel 内不显示浏览器地址栏。`oriel.ps1` 仅包装 `serve --oriel-stdio`，发现声明不会执行它；打开工具或依赖页面时才按生命周期启动，不会自动安装或更新。依赖页面通过 `prerequisites: [{"pluginId":"tether","ruleId":"..."}]` 引用规则。宿主确认就绪后创建页面；切换、隐藏和关闭页面保留转发，完整退出则清理接入实例的全部 Tether 托管转发。
 
 同一配置已有后台时，stdio 接入核验实例后复用；因此 Oriel 退出也会清理该后台内手动与计划启动的托管连接。外部 SSH 和 Agent 不受影响。当前未实现多个 Oriel 同时共享一个 Tether 实例的会话仲裁。
 
-准确输入输出、配置示例与错误边界见[实现契约](docs/implementation.md)。设计入口见[当前基线](docs/design/current-design.md)，需求验收矩阵见[实现交接](docs/implementation-handoff.md)。
+独立页面和宿主内均提供“使用说明”入口，内容来自同一份随包 [使用说明](USER_GUIDE.md)，无需联网或访问源码。准确输入输出、配置示例与错误边界见[实现契约](docs/implementation.md)。设计入口见[当前基线](docs/design/current-design.md)，需求验收矩阵见[实现交接](docs/implementation-handoff.md)。
 
 ## 验证与限制
 

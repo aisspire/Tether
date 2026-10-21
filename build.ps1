@@ -13,7 +13,8 @@ try {
     if ($LASTEXITCODE) { throw 'Rust build failed' }
     $bundle = Join-Path $PSScriptRoot 'target/bundle'
     New-Item -ItemType Directory -Force $bundle | Out-Null
-    Copy-Item "target/windows/$profile/tether.exe",'plugin.json','oriel.ps1' $bundle -Force
+    Copy-Item "target/windows/$profile/tether.exe",'plugin.json','oriel.ps1','USER_GUIDE.md' $bundle -Force
+    if (Test-Path (Join-Path $bundle 'dist')) { Remove-Item (Join-Path $bundle 'dist') -Recurse -Force }
     Copy-Item 'dist' $bundle -Recurse -Force
     Write-Host "Standalone bundle: $bundle"
 } finally { Pop-Location }

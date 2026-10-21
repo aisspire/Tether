@@ -71,3 +71,9 @@
 已有后台时先核验实例身份，再桥接公共接口。后续 status 的 instance 必须与首行一致。Oriel 对真实状态和规则结果分别核对；脚本退出不算转发就绪。正常退出通过已验证实例的受认证接口取消待办，再结束 stdio 包装进程；不按名称全局结束 SSH。
 
 宿主声明版本 2：`capabilities: ["web-page","local-service-v1"]`，`lifecycle: {protocol:"stdio-v1", entrypoint:"oriel.ps1", args:[]}`，页面 `service: "tether"`。其他纯页面可只声明 `web-page` 并添加 `prerequisites`。协议不包含任意脚本、安装更新或通用工作流动作。
+
+## 应用展示与随包说明（2026-10-22）
+
+`plugin.json` 的入口新增 `presentation: "application"`，供支持该扩展的 Oriel 选择通用工具布局，不显示浏览器地址栏和通用前进后退；不改变原有服务、前置等待及退出契约。顶层 `documentation: "USER_GUIDE.md"` 指向交付目录内的说明文件，宿主读取前检查路径、文件类型、UTF-8 和 256 KiB 大小边界，按文本显示，不执行文档 HTML。
+
+构建将同一份 [USER_GUIDE.md](../USER_GUIDE.md) 编入独立 UI，并原样复制进交付目录；独立页面有说明弹窗，不额外依赖 Oriel API。交付文件夹可放入宿主默认或额外插件读取目录，保存设置或重新加载时自动发现，也兼容显式登记路径。新增宿主能力需要相应版本的 Oriel，此后兼容工具可复用声明而不修改宿主路由。
