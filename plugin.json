@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "id": "tether",
+  "name": "Tether",
+  "version": "0.1.0",
+  "capabilities": ["web-page", "local-service-v1"],
+  "lifecycle": { "protocol": "stdio-v1", "entrypoint": "oriel.ps1", "args": [] },
+  "entries": [{ "id": "workspace", "title": "Tether", "kind": "web-page", "service": "tether", "proxy": { "mode": "direct" } }]
+}

@@ -1,6 +1,6 @@
 # SSH 运行、计划与观测
 
-状态：设计，尚未实现。行为边界以[当前基线](current-design.md)为准，配置解析见[配置与密钥](config-and-keys.md)。
+状态：本文保留已确认的产品要求；已实现部分、准确字段和当前限制见[实现契约](../implementation.md)及[实际验证](../../verification.md)，下文候选方案不等于全部已交付。行为边界以[当前基线](current-design.md)为准，配置解析见[配置与密钥](config-and-keys.md)。
 
 ## 1. 规则与连接的关系
 
