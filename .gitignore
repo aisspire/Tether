@@ -1,0 +1,29 @@
+# Rust 与前端依赖、构建输出。
+/target/
+/dist/
+node_modules/
+**/.vite/
+/test-results/
+/playwright-report/
+
+# 本机配置、运行记录、认证材料不进入源码仓库。
+/.local/
+/runtime/
+/data/
+/.ssh/
+.env
+.env.*
+!.env.example
+!.env.sample
+*.log
+*.pem
+*.ppk
+*.key
+**/id_rsa
+**/id_ecdsa
+**/id_ed25519
+**/id_ecdsa_sk
+**/id_ed25519_sk
+
+.DS_Store
+Thumbs.db
