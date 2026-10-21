@@ -11,10 +11,12 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 在本仓库的 Windows PowerShell 中执行：
 
 ```powershell
-.\build.ps1
+.\build.cmd
 .\target\bundle\tether.exe check
 .\target\bundle\tether.exe serve
 ```
+
+`build.cmd` 调用同目录的 `build.ps1` 并透传参数，CMD 与 PowerShell 均可使用；例如 `build.cmd -DebugBuild`。从 Oriel 父仓库可执行 `plugins\external\tether\build.cmd`，脚本会自动定位 Tether 目录。父仓库根目录的 `build.cmd` 只打包 Oriel，不会打包或安装 Tether。
 
 构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`dist/`、`plugin.json`、`oriel.ps1`。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
 
