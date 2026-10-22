@@ -18,6 +18,7 @@
 | 资料 | 需要核对的内容 |
 | --- | --- |
 | [OpenSSH ssh 手册](https://man.openbsd.org/ssh) | 转发、多个参数、跳板、配置解析与命令行语义 |
+| [OpenSSH 10.0 参数目录来源](https://github.com/openssh/openssh-portable/blob/V_10_0_P1/ssh_config.5) | 参数目录的 102 项配置指令名称；中文标签与表单由 Tether 自行维护，本机支持仍由实际客户端决定 |
 | [OpenSSH ssh_config 手册](https://man.openbsd.org/ssh_config) | 配置优先级、Include／Match、保活、转发建立、原生配置能力 |
 | [ExitOnForwardFailure](https://man.openbsd.org/ssh_config#ExitOnForwardFailure) | 新组转发建立失败的处理；不保证最终业务目标健康 |
 | [ClearAllForwardings](https://man.openbsd.org/ssh_config#ClearAllForwardings) | 会清除文件及命令行来源的转发，不能随意用于只排除文件转发 |

@@ -1,5 +1,21 @@
 # 实际验证与剩余工作
 
+## 2026-10-22：主机为中心的映射与计划体验
+
+本节为本轮实际验证；后文既有记录保留为历史，不替代本轮结果。
+
+- Windows `npm run build` 通过 Vue / TypeScript 检查与 Vite 生产构建；按现有 package-lock.json 执行局部 npm ci，未升级依赖或修改锁文件。
+- Windows `cargo clippy --locked --offline --all-targets -- -D warnings` 通过；清理 Windows 进程构造分支原有冗余 return，保持进程归属行为。
+- Windows `cargo test --locked --offline` 7 项通过，新增覆盖旧配置兼容、稳定引用、可选网页入口及片段地址、非网页／含凭据地址拒绝、目标内用户与 User 覆盖冲突。
+- Windows `scripts/check-runtime.mjs` 22 项通过：除既有 20 项真实回环 SSH 行为外，新增草稿主机预览不保存、计划固定成员；同时检查活动连接不能 dismiss、失败提示可关闭及停止后运行记录自动移除。已有实例退出检查改为直接等待 exitCode，避免退出事件已发生时遗漏监听。
+- Windows Edge `scripts/check-ui.mjs` 15 项通过：统一主机入口与映射归属、去除重复用户与分类字段、目录／原文共用参数、批量导入预览、重复监听反馈与撤销删除、未保存继续／放弃及键盘保存、外部修订冲突保留草稿、弹窗内真实密码认证、运行参数待应用与明确重启后的实际传输、计划主机分组及固定成员、搜索筛选、主机删除引用清理、480px 深色 40 条长列表和编辑弹窗、折叠记忆及焦点。检查未捕获的浏览器异常为空。
+- 已查看浅色主机列表和深色窄屏编辑截图，修正映射行标题窄屏换行。参数、批量编辑和说明弹窗均未出现测试窗口横向溢出；未据此宣称所有分辨率与辅助技术完整验收。
+- Oriel 的现有 Windows `scripts/check-tether.mjs` 11 项联调通过，验证原有声明发现、应用布局、前置就绪、共享 PID、认证、手动停止与退出归属。末尾仍有既有 WebView 无效窗口句柄日志，连接清理与外部 SSH 保留断言通过；本轮未修改宿主实现。
+- 使用现有 build.ps1 生成 Release `target/bundle/`，最终生产 UI 和 USER_GUIDE.md 同步进包；`scripts/check-bundle.mjs` 5 项通过，涵盖随包声明／说明、仓库外资源、系统 SSH check、CLI 状态及 stdin 仍打开时退出。未安装、提交或发布。
+- 文档本地链接与 `git diff --check` 通过。WSL 前端原生绑定与 Windows 不互用，WSL 默认 Cargo 缓存不可写，因此本轮以已有 Windows 工具链完成构建及功能验证；没有安装系统或全局工具。
+
+参数目录按 OpenSSH portable 10.0 文档列出 102 项指令，不是用户本机 Windows 客户端全部参数的逐项验收结果。仅显式原生解析和实际启动确认具体支持情况。真实远端主机、系统 Agent 修改、硬件密钥、多因素及所有客户端版本的历史限制继续保留。
+
 ## 2026-10-22：应用布局、发现与随包说明
 
 - Oriel 与 Tether 的 Windows 前端类型检查、生产构建通过；Oriel Windows Debug 和 Release 程序构建通过，Release 使用根目录现有构建入口的 `-NoBundle`，未生成新安装包。

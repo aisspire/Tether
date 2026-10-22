@@ -19,12 +19,15 @@
   "rules": [{
     "id": "ops-web", "name": "管理页面", "hostId": "host-prod",
     "direction": "local", "bind": "127.0.0.1", "port": 18080,
-    "target": "127.0.0.1", "targetPort": 8080, "notes": ""
+    "target": "127.0.0.1", "targetPort": 8080, "notes": "",
+    "openUrl": "http://127.0.0.1:18080"
   }],
   "plans": [{"id":"daily","name":"日常","ruleIds":["ops-web"],"autoStart":false}],
   "keyFiles": [], "sshFiles": [], "theme": "system"
 }
 ```
+
+`openUrl` 是可选网页快捷入口，默认空；非空须为不含凭据的 HTTP／HTTPS 地址，不参与 SSH 运行语义或兼容指纹。旧版本 1 配置可直接读取，不改 ID 或计划引用。`category` 为兼容旧配置保留，界面不再提供主机分类。
 
 方向为 `local` / `remote` / `dynamic`；动态转发不需要目标。IPv6 地址不带方括号，运行编译时加括号。空或通配监听需由用户明确选择。`configFile: null` 使用原生默认配置；`none` 可选择无用户配置。高级 `options` 每项为一份原生 `-o Name=Value`，保持顺序与重复项；路径含空格时按 SSH 配置语法给值加双引号。
 
@@ -35,6 +38,8 @@
 启动显式调用本机 `ssh -G`，因此可能触发原文件的 `Match exec`；不在轮询里自动解析。按实际生效配置构建去除所有来源转发的临时配置，再由同一客户端回读核对。每一跳分别解析其原始配置，目标的身份覆盖不会套到跳板。仅将缺少的 TCP 转发加入新进程。
 
 继承的转发 ID 为 `ssh:<host-id>:<语义摘要>`，标为只读来源。Unix socket 和动态远程转发等无法可靠表达的来源明确失败。存在歧义的 known_hosts 多值路径、重复跳板别名、IPv6 字面量跳板等不静默降级。原文件不被规划器重写。
+
+成功停止并清理后从 `status.groups` 移除运行记录，不保留 stopped 历史。失败保留诊断直到 dismiss 或同一映射重试；dismiss 不得替代停止。UI 映射登记与运行结果合并展示，运行参数与日志按实际连接展开。
 
 连接参数变化返回 `pending`，用户明确停止受影响连接组，再启动才应用。重连沿用该组快照；外部文件内容仍可能变化。启动新组失败不回滚其他组。组拥有实际进程句柄及 Windows Job Object，运行日志最多保留 160 行、仅在内存中；旧 PID 和端口扫描从不作为接管依据。
 
@@ -48,7 +53,8 @@
 | --- | --- |
 | status / reload | 读取状态 / 显式重载本地配置；不启动连接 |
 | save | `config`、`revision`；成功后才更新内存 |
-| preview / test | `hostId`、可选 `overrides`；生效参数 / 目标 TCP 响应 |
+| preview / test | `hostId` 或完整 `host` 草稿、可选 `overrides`；生效参数 / 目标 TCP 响应，不保存草稿 |
+| dismiss | `groupId`；只移除已结束且无进程、无重连意图的失败记录，拒绝活动连接 |
 | ensure | `request: {ruleIds?, temporary?, overrides?, planId?, consumer?}` |
 | stop | `scope: group/host/all`，前两者需 `id` |
 | shutdown | 拒绝新动作、取消认证与重连、停止本实例托管资源并退出 |
@@ -77,3 +83,11 @@
 `plugin.json` 的入口新增 `presentation: "application"`，供支持该扩展的 Oriel 选择通用工具布局，不显示浏览器地址栏和通用前进后退；不改变原有服务、前置等待及退出契约。顶层 `documentation: "USER_GUIDE.md"` 指向交付目录内的说明文件，宿主读取前检查路径、文件类型、UTF-8 和 256 KiB 大小边界，按文本显示，不执行文档 HTML。
 
 构建将同一份 [USER_GUIDE.md](../USER_GUIDE.md) 编入独立 UI，并原样复制进交付目录；独立页面有说明弹窗，不额外依赖 Oriel API。交付文件夹可放入宿主默认或额外插件读取目录，保存设置或重新加载时自动发现，也兼容显式登记路径。新增宿主能力需要相应版本的 Oriel，此后兼容工具可复用声明而不修改宿主路由。
+
+## 主机操作界面（2026-10-22）
+
+主机内维护连接配置和多条映射，批量保存沿用 save + revision 的配置原子写入及外部修改检测；计划按主机选中并保存明确 ruleIds，不自动纳入新增映射。删除主机／映射时同步移除其计划引用，但运行资源只按用户选择停止；保留的连接继续作为临时托管项展示。
+
+常用参数、目录覆盖行和原文共用有序 options。目录固定为 OpenSSH portable 10.0 文档的 102 项，不代表本机可用清单；原生 preview 和启动负责最终语义校验，目标内用户与 User 覆盖冲突由后台拒绝。映射批量导入支持制表符和 JSON，预览时检查字段及同主机监听冲突，保存前统一校验。
+
+启动结果提供逐项状态及仅重试未就绪的已登记映射，重试沿用该次请求的 overrides；成功通知短暂显示，错误和失败记录由用户关闭。编辑草稿绑定打开时的 revision，保存失败保留输入；设置原文绑定读取的文件路径与 revision，切换路径不允许把旧内容写入新文件。

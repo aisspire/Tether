@@ -58,6 +58,8 @@ pub struct Rule {
     pub target_port: u16,
     #[serde(default)]
     pub notes: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub open_url: String,
 }
 impl Rule {
     pub fn same_intent(&self, other: &Self) -> bool {
@@ -94,6 +96,27 @@ impl Rule {
             address(&self.target, false)?;
             if self.target_port == 0 {
                 return Err("目标端口须非零".into());
+            }
+        }
+        if !self.open_url.is_empty() {
+            if self
+                .open_url
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace())
+            {
+                return Err("网页地址包含无效空白或控制字符".into());
+            }
+            let uri = self
+                .open_url
+                .split('#')
+                .next()
+                .unwrap()
+                .parse::<axum::http::Uri>()
+                .map_err(|_| "网页地址无效")?;
+            if !matches!(uri.scheme_str(), Some("http" | "https"))
+                || uri.authority().is_none_or(|a| a.as_str().contains('@'))
+            {
+                return Err("网页地址须为不含凭据的 HTTP 或 HTTPS 地址".into());
             }
         }
         Ok(())
@@ -198,6 +221,25 @@ impl Config {
                 return Err("主机 ID、目标或超时无效".into());
             }
             crate::ssh::validate_options(&h.options)?;
+            let target_user = h
+                .destination
+                .strip_prefix("ssh://")
+                .unwrap_or(&h.destination)
+                .split_once('@')
+                .map(|(user, _)| user);
+            if let Some(target_user) = target_user {
+                for option in &h.options {
+                    if crate::ssh::key(option) == "user" {
+                        let user = option
+                            .split_once('=')
+                            .map(|(_, v)| v.trim().trim_matches('"'))
+                            .unwrap_or("");
+                        if user != target_user {
+                            return Err("SSH 目标中的用户与 User 覆盖冲突，请只保留一个来源".into());
+                        }
+                    }
+                }
+            }
         }
         let mut rules = HashSet::new();
         for r in &self.rules {
@@ -209,7 +251,8 @@ impl Config {
         let mut plans = HashSet::new();
         for p in &self.plans {
             valid_id(&p.id)?;
-            if !plans.insert(&p.id)
+            if p.name.trim().is_empty()
+                || !plans.insert(&p.id)
                 || p.rule_ids.iter().any(|r| !rules.contains(r))
                 || p.rule_ids.iter().collect::<HashSet<_>>().len() != p.rule_ids.len()
             {
@@ -220,5 +263,47 @@ impl Config {
             return Err("主题无效".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn config() -> Config {
+        serde_json::from_value(serde_json::json!({
+            "version":1,"hosts":[{"id":"h","name":"主机","destination":"admin@fixture"}],
+            "rules":[{"id":"r","hostId":"h","name":"Web","direction":"local","bind":"127.0.0.1","port":18080,"target":"127.0.0.1","targetPort":8080}],
+            "plans":[{"id":"p","name":"计划","ruleIds":["r"]}],"theme":"system"
+        })).unwrap()
+    }
+    #[test]
+    fn old_configs_keep_stable_references_and_accept_optional_web_link() {
+        let mut c = config();
+        assert!(c.validate().is_ok());
+        assert!(c.rules[0].open_url.is_empty());
+        c.rules[0].open_url = "https://127.0.0.1:18080/dashboard".into();
+        assert!(c.validate().is_ok());
+        c.rules[0].open_url = "http://127.0.0.1:18080/#/dashboard".into();
+        assert!(c.validate().is_ok());
+        let roundtrip: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(roundtrip.plans[0].rule_ids, vec!["r"]);
+        assert_eq!(roundtrip.hosts[0].id, "h");
+    }
+    #[test]
+    fn rejects_conflicting_user_and_non_web_shortcuts() {
+        let mut c = config();
+        c.hosts[0].options.push("User=other".into());
+        assert!(c.validate().unwrap_err().contains("用户"));
+        c.hosts[0].options = vec!["User=admin".into()];
+        assert!(c.validate().is_ok());
+        for url in [
+            "javascript:alert(1)",
+            "file:///secret",
+            "https://user:secret@host/",
+            "relative",
+        ] {
+            c.rules[0].open_url = url.into();
+            assert!(c.validate().is_err(), "{url}");
+        }
     }
 }

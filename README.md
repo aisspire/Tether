@@ -20,7 +20,7 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
 
-`serve` 输出一行 JSON，包含实际后台身份和 `pageUrl`。在浏览器打开该地址即可添加主机、规则和计划；后台运行期间可关闭页面，转发继续。终端按 Ctrl+C 退出后台会停止托管连接。只监听随机 IPv4 回环端口，不改变系统代理。
+`serve` 输出一行 JSON，包含实际后台身份和 `pageUrl`。在浏览器打开该地址即可在主机内批量添加映射，并选择主机下的映射形成计划；后台运行期间可关闭页面，转发继续。终端按 Ctrl+C 退出后台会停止托管连接。只监听随机 IPv4 回环端口，不改变系统代理。
 
 默认数据目录为 `%LOCALAPPDATA%/Tether/`，可用 `--data-dir C:/absolute/path` 或进程环境变量 `TETHER_DATA_DIR` 隔离。目录内 `config.json` 是规则与计划的权威；`instance.json` 含敏感的本机调用身份，不应共享。原有 SSH 文件、私钥和 known_hosts 继续由 OpenSSH 使用。
 
@@ -37,7 +37,8 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 - 配置版本校验、冲突检测及原子保存；SSH 原文编辑、外部修改检测、备份及绑定主配置的原生校验。
 - 登记密钥路径、公钥和指纹、只含公钥与 Agent-only 身份区分、加密密钥生成、公钥复制、Agent 加载/移出；口令与备注修改提供公共动作。
 - Windows SSH 命令行只读观测；主机处单一 TCP 响应时间，跳板目标显示无数据。
-- 同一套紧凑页面、浅深主题、主机常用参数表单、计划和配置编辑；Oriel 前置等待、共享、认证及退出接入。
+- 同一套紧凑页面、浅深主题；主机内批量映射、导入预览、搜索筛选、可读参数与 102 项 SSH 参数目录、固定成员计划、未保存及引用影响保护；Oriel 前置等待、共享、认证及退出接入。
+- 停止后自动移除运行记录，失败提示可关闭；映射地址复制、可选网页入口、参数待应用与整组重启。
 
 ## CLI 与 Oriel
 

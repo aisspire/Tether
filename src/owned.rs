@@ -74,7 +74,7 @@ impl Owned {
                 let _ = child.start_kill();
                 return Err("SSH 归属或恢复失败，已取消启动".into());
             }
-            return Ok(Self { child, job });
+            Ok(Self { child, job })
         }
         #[cfg(not(windows))]
         Ok(Self { child })

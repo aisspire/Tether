@@ -154,6 +154,17 @@ impl Runtime {
                 self.stop(scope, value["id"].as_str()).await;
                 Ok(self.status())
             }
+            "dismiss" => {
+                let gid = value["groupId"].as_str().ok_or("缺少连接")?;
+                let mut groups = self.groups.lock().unwrap();
+                if let Some(e) = groups.get(gid) {
+                    if e.view.desired || e.view.pid.is_some() || e.view.state != "failed" {
+                        return Err("只能关闭已结束的失败记录；运行连接请使用停止操作".into());
+                    }
+                    groups.remove(gid);
+                }
+                Ok(json!({"dismissed":true}))
+            }
             "shutdown" => {
                 self.exit().await;
                 Ok(json!({"stopped":true,"instance":self.instance}))
@@ -243,16 +254,25 @@ impl Runtime {
         }
     }
     fn host(&self, v: &Value) -> Result<Host> {
-        let mut h = self
-            .store
-            .lock()
-            .unwrap()
-            .config
-            .hosts
-            .iter()
-            .find(|h| Some(h.id.as_str()) == v["hostId"].as_str())
-            .cloned()
-            .ok_or("主机不存在")?;
+        let mut h: Host = if v.get("host").is_some() {
+            let h = serde_json::from_value(v["host"].clone()).map_err(|e| e.to_string())?;
+            let c = Config {
+                hosts: vec![h],
+                ..Config::default()
+            };
+            c.validate()?;
+            c.hosts.into_iter().next().unwrap()
+        } else {
+            self.store
+                .lock()
+                .unwrap()
+                .config
+                .hosts
+                .iter()
+                .find(|h| Some(h.id.as_str()) == v["hostId"].as_str())
+                .cloned()
+                .ok_or("主机不存在")?
+        };
         if let Some(opts) = v["overrides"].as_array() {
             let mut o: Vec<String> = opts
                 .iter()
@@ -350,6 +370,15 @@ impl Runtime {
                 }
             };
             let mut gs = self.groups.lock().unwrap();
+            gs.retain(|_, g| {
+                g.view.state != "failed"
+                    || g.view.pid.is_some()
+                    || !g
+                        .view
+                        .rules
+                        .iter()
+                        .any(|r| r.id == rule.id || r.same_intent(&rule))
+            });
             let existing = gs
                 .values_mut()
                 .find(|g| g.view.desired && g.view.rules.iter().any(|r| r.id == rule.id));
@@ -608,6 +637,11 @@ impl Runtime {
             });
         }
         let _ = std::fs::remove_file(file);
+        // Stop is complete only after process cleanup. Keep failures for diagnosis until dismissed.
+        let cancelled = *cancel.borrow();
+        if cancelled {
+            self.groups.lock().unwrap().remove(&gid);
+        }
     }
     #[cfg(windows)]
     pub fn owned_pids(&self) -> Vec<u32> {
@@ -765,6 +799,7 @@ fn inherited_rules(hid: &str, lines: &[String]) -> Result<Vec<Rule>> {
                 target,
                 target_port,
                 notes: "来自 SSH 生效配置（只读）".into(),
+                open_url: String::new(),
             })
         })
         .collect()

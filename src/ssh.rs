@@ -262,8 +262,8 @@ pub async fn compile(h: &Host, root: &Path) -> Result<Snapshot> {
     result?;
     let fingerprint = store::revision(
         format!(
-            "{}\n{}\n{}\n{}\n{}",
-            h.id, h.ssh, config_text, h.reconnect, h.hidden
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            h.id, h.ssh, config_text, h.reconnect, h.hidden, h.timeout_secs
         )
         .as_bytes(),
     );
@@ -349,6 +349,7 @@ mod tests {
             target: "::1".into(),
             target_port: 90,
             notes: "".into(),
+            open_url: String::new(),
         };
         assert_eq!(r.spec(), "[::1]:80:[::1]:90");
     }
