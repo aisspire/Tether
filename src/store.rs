@@ -16,11 +16,17 @@ pub fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| e.to_string())
 }
 pub fn private_dir(path: &Path) -> Result<()> {
+    let existed = path.exists();
     fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    #[cfg(not(unix))]
+    let _ = existed;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        if !existed {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

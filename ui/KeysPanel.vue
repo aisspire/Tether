@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { api, type Config } from './api'
+import { useSession, type Config } from './api'
 import { clone } from './editor'
+const api=useSession().request
 interface KeyFile {path:string; publicPath:string; privateFile:boolean; publicFile:boolean; publicKey:string|null; fingerprint:string|null; error:string|null}
-interface Inventory {files:KeyFile[]; agent:string|null; agentError:string|null}
+interface Inventory {agentStatus:{available:boolean;socket:string|null;candidates:string[];reason?:string};files:KeyFile[]; agent:string|null; agentError:string|null}
 const props=defineProps<{config:Config;revision:string}>()
 const emit=defineEmits<{refresh:[];notice:[message:string]}>()
-const inventory=ref<Inventory|null>(null),pending=ref(''),error=ref(''),path=ref(''),search=ref(''),comments=ref<Record<string,string>>({})
+const inventory=ref<Inventory|null>(null),pending=ref(''),error=ref(''),path=ref(''),search=ref(''),comments=ref<Record<string,string>>({}),socket=ref('')
 const filename=(p:string)=>p.split(/[\\/]/).at(-1)||p
 const identity=(key:string)=>key.trim().split(/\s+/).slice(0,2).join(' ')
 const agentKeys=computed(()=>inventory.value?.agent?.trim().split('\n').filter(Boolean).map(publicKey=>{const [algorithm,,...comment]=publicKey.trim().split(/\s+/);return {publicKey,algorithm,comment:comment.join(' '),registered:inventory.value!.files.some(k=>k.publicKey&&identity(k.publicKey)===identity(publicKey))}})||[])
@@ -21,6 +22,7 @@ onMounted(()=>run('refresh',load))
 <template>
  <div class="toolbar"><input v-model="search" aria-label="搜索密钥" placeholder="搜索文件名、路径或指纹"><button :disabled="!!pending" @click="run('refresh',load)">{{pending==='refresh'?'读取中…':'刷新密钥与 Agent'}}</button></div>
  <p v-if="error" class="message error" role="alert">{{error}}<button @click="error=''">关闭</button></p>
+ <section v-if="inventory?.agentStatus&&!inventory.agentStatus.available" class="panel"><h2>连接已有 Agent</h2><p class="muted">{{inventory.agentStatus.reason}}</p><label>Agent socket 路径<input v-model="socket" list="agent-sockets" placeholder="/tmp/ssh-…/agent.…"><datalist id="agent-sockets"><option v-for="p in inventory.agentStatus.candidates" :key="p" :value="p" /></datalist></label><button :disabled="!!pending||!socket" @click="run('agent-bind',async()=>{await api('agent.bind',{path:socket});await load()})">绑定 socket</button></section>
  <form class="panel key-register" @submit.prevent="register()"><label>密钥文件的绝对路径<input v-model="path" required placeholder="C:/Users/you/.ssh/id_ed25519"></label><div class="actions"><button :disabled="!!pending">登记路径</button><button type="button" :disabled="!!pending||!path.trim()" @click="register(true)">在新路径生成 Ed25519 密钥</button></div></form>
  <section class="key-list" aria-labelledby="key-list-title" :aria-busy="pending==='refresh'"><div class="key-section-heading"><h2 id="key-list-title">已登记密钥 <small>{{config.keyFiles.length}}</small></h2></div>
   <p v-if="!inventory&&pending==='refresh'" class="empty compact" role="status">正在读取密钥…</p><p v-else-if="!config.keyFiles.length" class="empty compact">还没有登记密钥，在上方填写已有文件路径或生成新密钥。</p><p v-else-if="!files.length" class="empty compact">没有匹配的密钥。<button @click="search=''">清除搜索</button></p>

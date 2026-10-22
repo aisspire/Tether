@@ -1,4 +1,4 @@
-use crate::{model::*, runtime::Runtime};
+use crate::{environments::Hub, model::*, runtime::Runtime};
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
@@ -17,20 +17,21 @@ fn authorized(rt: &Runtime, headers: &HeaderMap) -> bool {
         && headers.get("authorization").and_then(|v| v.to_str().ok())
             == Some(format!("Bearer {}", rt.token).as_str())
 }
-async fn api(State(rt): State<Arc<Runtime>>, headers: HeaderMap, Json(v): Json<Value>) -> Response {
-    if !authorized(&rt, &headers) {
+async fn api(State(hub): State<Arc<Hub>>, headers: HeaderMap, Json(v): Json<Value>) -> Response {
+    if !authorized(&hub.local, &headers) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({"error":"调用身份或来源无效"})),
         )
             .into_response();
     }
-    match rt.action(v).await {
+    match hub.action(v).await {
         Ok(v) => Json(json!({"ok":true,"value":v})).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"ok":false,"error":e}))).into_response(),
     }
 }
-async fn assets(State(rt): State<Arc<Runtime>>, req: Request) -> Response {
+async fn assets(State(hub): State<Arc<Hub>>, req: Request) -> Response {
+    let rt = &hub.local;
     if req.headers().get("host").and_then(|h| h.to_str().ok())
         != Some(rt.origin.trim_start_matches("http://"))
     {
@@ -74,7 +75,7 @@ async fn assets(State(rt): State<Arc<Runtime>>, req: Request) -> Response {
             .into_response(),
     }
 }
-pub fn router(rt: Arc<Runtime>) -> Router {
+pub fn router(rt: Arc<Hub>) -> Router {
     Router::new()
         .route("/api", post(api))
         .fallback(get(assets))

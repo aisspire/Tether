@@ -61,13 +61,7 @@ pub fn validate_options(opts: &[String]) -> Result<()> {
     Ok(())
 }
 pub fn command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x08000000);
-    }
-    cmd
+    crate::platform::command(program)
 }
 pub async fn output(mut cmd: Command, secs: u64) -> Result<String> {
     cmd.stdin(Stdio::null());

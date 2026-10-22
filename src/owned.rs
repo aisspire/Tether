@@ -35,6 +35,9 @@ impl Owned {
         #[cfg(unix)]
         {
             cmd.process_group(0);
+            if !env.iter().any(|(k, _)| k == "SSH_AUTH_SOCK") {
+                cmd.env_remove("SSH_AUTH_SOCK");
+            }
         }
         #[cfg(windows)]
         {

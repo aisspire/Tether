@@ -5,6 +5,8 @@ import os from 'node:os'
 import readline from 'node:readline'
 import assert from 'node:assert/strict'
 const exe=path.resolve(process.argv[2]??'target/bundle/tether.exe'),data=await mkdtemp(path.resolve('target/check-bundle-'))
+if(process.platform!=='win32')process.env.XDG_RUNTIME_DIR=path.join(data,'system-runtime')
+const linux=await readFile(path.join(path.dirname(exe),'tether-linux-x64'));assert.equal(linux.subarray(0,4).toString('hex'),'7f454c46');assert.equal(linux[4],2);assert.equal(linux.readUInt16LE(18),62);for(let i=0;i<linux.readUInt16LE(56);i++)assert.notEqual(linux.readUInt32LE(Number(linux.readBigUInt64LE(32))+i*linux.readUInt16LE(54)),3,'Linux backend must not require a dynamic interpreter')
 const manifest=JSON.parse(await readFile(path.join(path.dirname(exe),'plugin.json'),'utf8'));assert.equal(manifest.entries[0].presentation,'application');assert.match(await readFile(path.join(path.dirname(exe),manifest.documentation),'utf8'),/配置与运行状态/)
 assert.equal(JSON.parse(execFileSync(exe,['check'],{encoding:'utf8'})).protocol,1)
 const env={...process.env};delete env.TETHER_UI_DIR
@@ -16,5 +18,5 @@ const out=JSON.parse(execFileSync(exe,['request','--data-dir',data,'--json','{"a
 const r=await fetch(d.origin+'/api',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${d.token}`},body:'{"action":"shutdown"}'});assert.equal((await r.json()).ok,true)
 await new Promise((resolve,reject)=>{if(p.exitCode!==null)return resolve();const timer=setTimeout(()=>reject(new Error('shutdown still waits for open stdin')),7000);p.once('exit',()=>{clearTimeout(timer);resolve()})})
 await assert.rejects(readFile(path.join(data,'instance.json')))
-console.log(JSON.stringify({passed:['application declaration and bundled user guide','portable assets outside repository cwd','native SSH check','CLI authenticated status','shutdown exits with stdin still open'],exe,data},null,2))
+console.log(JSON.stringify({passed:['bundled Linux x64 ELF','application declaration and bundled user guide','portable assets outside repository cwd','native SSH check','CLI authenticated status','shutdown exits with stdin still open'],exe,data},null,2))
 }finally{p.stdin.end();if(p.exitCode===null)p.kill()}

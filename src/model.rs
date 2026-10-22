@@ -158,6 +158,8 @@ pub struct Config {
     pub ssh_files: Vec<String>,
     #[serde(default)]
     pub theme: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_socket: Option<String>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -169,11 +171,19 @@ impl Default for Config {
             key_files: vec![],
             ssh_files: vec![],
             theme: "system".into(),
+            agent_socket: None,
         }
     }
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        if self
+            .agent_socket
+            .as_ref()
+            .is_some_and(|p| !std::path::Path::new(p).is_absolute())
+        {
+            return Err("Agent socket 须为当前环境的绝对路径".into());
+        }
         if self.version != 1 {
             return Err("不支持的配置版本，原文件保留".into());
         }

@@ -10,7 +10,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -68,6 +68,10 @@ pub struct Ensure {
 }
 pub struct Runtime {
     pub root: PathBuf,
+    pub run_dir: PathBuf,
+    pub environment: String,
+    pub environment_label: String,
+    activated: AtomicBool,
     pub store: Mutex<Store>,
     groups: Mutex<HashMap<String, Entry>>,
     gate: tokio::sync::Mutex<()>,
@@ -83,13 +87,31 @@ pub struct Runtime {
     pub external_gate: tokio::sync::Mutex<crate::external::Cache>,
     pub shutdown: watch::Sender<bool>,
     pub tool_cancel: watch::Sender<u64>,
+    pub agent_socket: Mutex<Option<String>>,
+    pub port_checks: Mutex<Vec<crate::detection::Check>>,
+    pub opened_files: Mutex<HashSet<PathBuf>>,
+    pub detection_epoch: AtomicU64,
+    test_gate: tokio::sync::Mutex<()>,
+    pub agent_gate: tokio::sync::Mutex<()>,
 }
 impl Runtime {
-    pub fn new(root: PathBuf, origin: String, token: String, auth_origin: String) -> Arc<Self> {
+    pub fn new(
+        root: PathBuf,
+        run_dir: PathBuf,
+        environment: String,
+        environment_label: String,
+        origin: String,
+        token: String,
+        auth_origin: String,
+    ) -> Arc<Self> {
         let (shutdown, _) = watch::channel(false);
         Arc::new(Self {
             store: Mutex::new(Store::open(&root)),
             root,
+            run_dir,
+            environment,
+            environment_label,
+            activated: AtomicBool::new(false),
             groups: Mutex::default(),
             gate: tokio::sync::Mutex::new(()),
             epoch: AtomicU64::new(0),
@@ -104,6 +126,12 @@ impl Runtime {
             external_gate: tokio::sync::Mutex::default(),
             shutdown,
             tool_cancel: watch::channel(0).0,
+            port_checks: Mutex::default(),
+            opened_files: Mutex::default(),
+            detection_epoch: AtomicU64::new(0),
+            test_gate: tokio::sync::Mutex::new(()),
+            agent_socket: Mutex::default(),
+            agent_gate: tokio::sync::Mutex::new(()),
         })
     }
     pub fn status(&self) -> Value {
@@ -151,25 +179,39 @@ impl Runtime {
                         .is_some_and(|h| h == &m.host)
             })
             .collect::<Vec<_>>();
-        json!({"externalMatches":external_matches,"externalCheckError":external.1,"protocol":1,"instance":self.instance,"config":s.config,"revision":s.revision,"configError":s.error,"configPath":s.path,"groups":groups,"prompts":prompts,"latency":*self.latency.lock().unwrap()})
+        let checks = self.port_checks.lock().unwrap();
+        let checks = checks
+            .iter()
+            .filter(|c| {
+                c.epoch == self.detection_epoch.load(Ordering::SeqCst)
+                    && s.config
+                        .rules
+                        .iter()
+                        .chain(groups.iter().flat_map(|g| g.rules.iter()))
+                        .any(|r| r.id == c.rule_id && r.same_intent(&c.rule))
+            })
+            .collect::<Vec<_>>();
+        json!({"portChecks":checks,"environment":self.environment,"environmentLabel":self.environment_label,"externalMatches":external_matches,"externalCheckError":external.1,"protocol":1,"instance":self.instance,"config":s.config,"revision":s.revision,"configError":s.error,"configPath":s.path,"groups":groups,"prompts":prompts,"latency":*self.latency.lock().unwrap()})
     }
     pub async fn action(self: &Arc<Self>, value: Value) -> Result<Value> {
         if *self.shutdown.borrow() && value["action"] != "status" {
             return Err("后台正在退出，已拒绝新操作".into());
         }
         match value.get("action").and_then(Value::as_str).unwrap_or("") {
-            "status" => {
-                let rt = self.clone();
-                tokio::spawn(async move {
-                    crate::external::refresh(&rt, false).await;
-                });
+            "status" => Ok(self.status()),
+            "activate" => {
+                self.invalidate_checks();
+                self.activate();
                 Ok(self.status())
             }
+            "agent.status" | "agent.bind" => crate::agent::action(self, value).await,
             "reload" => {
+                self.invalidate_checks();
                 *self.store.lock().unwrap() = Store::open(&self.root);
                 Ok(self.status())
             }
             "save" => {
+                self.invalidate_checks();
                 let c =
                     serde_json::from_value(value["config"].clone()).map_err(|e| e.to_string())?;
                 self.store
@@ -211,16 +253,25 @@ impl Runtime {
             "preview" => {
                 let h = self.host(&value)?;
                 Ok(
-                    serde_json::to_value(ssh::compile(&h, &self.root.join("runtime")).await?)
+                    serde_json::to_value(ssh::compile(&h, &self.run_dir.join("runtime")).await?)
                         .unwrap(),
                 )
             }
             "test" => {
+                let _gate = self.test_gate.lock().await;
                 let h = self.host(&value)?;
-                let snap = ssh::compile(&h, &self.root.join("runtime")).await?;
-                let ms = ssh::latency(&snap).await;
+                let ports = crate::detection::test(self, &h);
+                let latency = async {
+                    match ssh::compile(&h, &self.run_dir.join("runtime")).await {
+                        Ok(snap) => (ssh::latency(&snap).await, None),
+                        Err(e) => (None, Some(e)),
+                    }
+                };
+                let (checks, (ms, error)) = tokio::join!(ports, latency);
                 self.latency.lock().unwrap().insert(h.id.clone(), ms);
-                Ok(json!({"hostId":h.id,"milliseconds":ms,"method":"SSH target TCP"}))
+                Ok(
+                    json!({"hostId":h.id,"milliseconds":ms,"method":"SSH target TCP","portChecks":checks,"error":error}),
+                )
             }
             "answer" => {
                 let id = value["id"].as_str().ok_or("缺少认证请求")?;
@@ -284,9 +335,10 @@ impl Runtime {
                     .push(rule);
                 Ok(json!({"saved":true}))
             }
-            "files.read" | "files.write" | "keys.list" | "keys.generate" | "keys.public"
-            | "keys.passphrase" | "keys.comment" | "agent.add" | "agent.remove"
-            | "knownHosts.find" | "knownHosts.remove" => crate::tools::action(self, value).await,
+            "files.browse" | "files.open" | "files.forget" | "files.read" | "files.write"
+            | "keys.list" | "keys.generate" | "keys.public" | "keys.passphrase"
+            | "keys.comment" | "agent.add" | "agent.remove" | "knownHosts.find"
+            | "knownHosts.remove" => crate::tools::action(self, value).await,
             _ => Err("未知公共动作".into()),
         }
     }
@@ -327,6 +379,7 @@ impl Runtime {
         if *self.shutdown.borrow() {
             return Err("后台正在退出".into());
         }
+        crate::agent::prepare(self).await;
         let config = {
             let s = self.store.lock().unwrap();
             if let Some(e) = &s.error {
@@ -372,7 +425,7 @@ impl Runtime {
                 let mut o = request.overrides.clone();
                 o.extend(h.options);
                 h.options = o;
-                ssh::compile(&h, &self.root.join("runtime")).await
+                ssh::compile(&h, &self.run_dir.join("runtime")).await
             } else {
                 Err("主机不存在".into())
             };
@@ -411,74 +464,75 @@ impl Runtime {
                     continue;
                 }
             };
-            let mut gs = self.groups.lock().unwrap();
-            gs.retain(|_, g| {
-                g.view.state != "failed"
-                    || g.view.pid.is_some()
-                    || !g
-                        .view
-                        .rules
-                        .iter()
-                        .any(|r| r.id == rule.id || r.same_intent(&rule))
-            });
-            let existing = gs
-                .values_mut()
-                .find(|g| g.view.desired && g.view.rules.iter().any(|r| r.id == rule.id));
-            if let Some(g) = existing {
-                if g.view.snapshot.fingerprint != snapshot.fingerprint
-                    || !g
-                        .view
-                        .rules
-                        .iter()
-                        .any(|r| r.id == rule.id && r.same_intent(&rule))
-                {
-                    results.push(json!({"ruleId":rule.id,"groupId":g.view.id,"state":"pending","error":"参数已变化；请显式停止连接组后重新启动"}));
+            {
+                let mut gs = self.groups.lock().unwrap();
+                gs.retain(|_, g| {
+                    g.view.state != "failed"
+                        || g.view.pid.is_some()
+                        || !g
+                            .view
+                            .rules
+                            .iter()
+                            .any(|r| r.id == rule.id || r.same_intent(&rule))
+                });
+                let existing = gs
+                    .values_mut()
+                    .find(|g| g.view.desired && g.view.rules.iter().any(|r| r.id == rule.id));
+                if let Some(g) = existing {
+                    if g.view.snapshot.fingerprint != snapshot.fingerprint
+                        || !g
+                            .view
+                            .rules
+                            .iter()
+                            .any(|r| r.id == rule.id && r.same_intent(&rule))
+                    {
+                        results.push(json!({"ruleId":rule.id,"groupId":g.view.id,"state":"pending","error":"参数已变化；请显式停止连接组后重新启动"}));
+                        continue;
+                    }
+                    add_consumer(&mut g.view, &request.consumer);
+                    waits.push((
+                        rule.id.clone(),
+                        g.view.id.clone(),
+                        true,
+                        g.status.subscribe(),
+                    ));
                     continue;
                 }
-                add_consumer(&mut g.view, &request.consumer);
-                waits.push((
-                    rule.id.clone(),
-                    g.view.id.clone(),
-                    true,
-                    g.status.subscribe(),
-                ));
-                continue;
-            }
-            if let Some(g) = gs.values_mut().find(|g| {
-                g.view.desired
-                    && g.view.snapshot.fingerprint == snapshot.fingerprint
-                    && g.view.rules.iter().any(|r| r.same_intent(&rule))
-            }) {
-                g.view.rules.push(rule.clone());
-                add_consumer(&mut g.view, &request.consumer);
-                waits.push((
-                    rule.id.clone(),
-                    g.view.id.clone(),
-                    true,
-                    g.status.subscribe(),
-                ));
-                continue;
-            }
-            if let Some(m) = external.iter().find(|m| {
-                m.rule_id == rule.id && m.rule.same_intent(&rule) && m.host == snapshot.host
-            }) {
-                if m.verified {
-                    results.push(json!({"ruleId":rule.id,"state":"running","reused":true,"source":"external","pid":m.pid}));
-                } else {
-                    results.push(json!({"ruleId":rule.id,"state":"unverified","error":"终端 SSH 已连接，远程监听无法在本机确认；未重复启动或接管"}));
+                if let Some(g) = gs.values_mut().find(|g| {
+                    g.view.desired
+                        && g.view.snapshot.fingerprint == snapshot.fingerprint
+                        && g.view.rules.iter().any(|r| r.same_intent(&rule))
+                }) {
+                    g.view.rules.push(rule.clone());
+                    add_consumer(&mut g.view, &request.consumer);
+                    waits.push((
+                        rule.id.clone(),
+                        g.view.id.clone(),
+                        true,
+                        g.status.subscribe(),
+                    ));
+                    continue;
                 }
-                continue;
+                if let Some(m) = external.iter().find(|m| {
+                    m.rule_id == rule.id && m.rule.same_intent(&rule) && m.host == snapshot.host
+                }) {
+                    if m.verified {
+                        results.push(json!({"ruleId":rule.id,"state":"running","reused":true,"source":"external","pid":m.pid}));
+                    } else {
+                        results.push(json!({"ruleId":rule.id,"state":"unverified","error":"终端 SSH 已连接，远程监听无法在本机确认；未重复启动或接管"}));
+                    }
+                    continue;
+                }
+                let has_conflict = gs
+                    .values()
+                    .any(|g| g.view.desired && g.view.rules.iter().any(|r| conflict(r, &rule)));
+                if has_conflict {
+                    results.push(
+                        json!({"ruleId":rule.id,"state":"conflict","error":"监听端与托管转发冲突"}),
+                    );
+                    continue;
+                }
             }
-            let has_conflict = gs
-                .values()
-                .any(|g| g.view.desired && g.view.rules.iter().any(|r| conflict(r, &rule)));
-            if has_conflict {
-                results.push(
-                    json!({"ruleId":rule.id,"state":"conflict","error":"监听端与托管转发冲突"}),
-                );
-                continue;
-            }
-            drop(gs);
             if batches
                 .values()
                 .any(|(_, rs)| rs.iter().any(|r| conflict(r, &rule)))
@@ -486,15 +540,27 @@ impl Runtime {
                 results.push(json!({"ruleId":rule.id,"state":"conflict","error":"同批监听端重复"}));
                 continue;
             }
+            if rule.direction != Direction::Remote {
+                match crate::detection::occupied(&rule).await {
+                    Ok(false) => {}
+                    result => {
+                        results.push(json!({"ruleId":rule.id,"state":"conflict","error":result.err().unwrap_or("监听端点已被占用；检测来源不会授予托管或就绪权限".into())}));
+                        continue;
+                    }
+                }
+            }
             batches
                 .entry(snapshot.fingerprint.clone())
                 .or_insert_with(|| (snapshot.clone(), vec![]))
                 .1
                 .push(rule);
         }
+        if epoch != self.epoch.load(Ordering::SeqCst) || *self.shutdown.borrow() {
+            return Err("启动已被停止或退出操作取消".into());
+        }
         for (_, (snapshot, rules)) in batches {
             let gid = id();
-            let file = self.root.join("runtime").join(format!("{gid}.conf"));
+            let file = self.run_dir.join("runtime").join(format!("{gid}.conf"));
             store::atomic(&file, snapshot.config_text.as_bytes())?;
             let args = ssh::launch_args(&snapshot, &file, &rules);
             let (cancel, rx) = watch::channel(false);
@@ -582,7 +648,7 @@ impl Runtime {
                 g.attempts = attempt;
                 g.error = None;
             });
-            let env = vec![
+            let mut env = vec![
                 (
                     "SSH_ASKPASS".into(),
                     std::env::current_exe()
@@ -596,6 +662,9 @@ impl Runtime {
                 ("TETHER_ASKPASS_TOKEN".into(), self.auth_token.clone()),
                 ("TETHER_ASKPASS_GROUP".into(), gid.clone()),
             ];
+            if let Some(socket) = self.agent_socket.lock().unwrap().clone() {
+                env.push(("SSH_AUTH_SOCK".into(), socket));
+            }
             let mut proc = match Owned::spawn(
                 &snapshot.snapshot.host.ssh,
                 &snapshot.args,
@@ -712,8 +781,42 @@ impl Runtime {
             .filter_map(|g| g.view.pid)
             .collect()
     }
-    pub async fn exit(&self) {
+    pub fn invalidate_checks(&self) {
+        self.detection_epoch.fetch_add(1, Ordering::SeqCst);
+        self.port_checks.lock().unwrap().clear();
+    }
+    pub fn activate(self: &Arc<Self>) {
+        if self.activated.swap(true, Ordering::SeqCst) || *self.shutdown.borrow() {
+            return;
+        }
+        let plans = self
+            .store
+            .lock()
+            .unwrap()
+            .config
+            .plans
+            .iter()
+            .filter(|p| p.auto_start)
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>();
+        for plan_id in plans {
+            let rt = self.clone();
+            tokio::spawn(async move {
+                let _ = rt
+                    .ensure(Ensure {
+                        plan_id: Some(plan_id),
+                        consumer: "auto-start".into(),
+                        ..Default::default()
+                    })
+                    .await;
+            });
+        }
+    }
+    pub fn begin_exit(&self) {
         self.shutdown.send_replace(true);
+    }
+    pub async fn exit(&self) {
+        self.begin_exit();
         let next = *self.tool_cancel.borrow() + 1;
         self.tool_cancel.send_replace(next);
         self.prompts.lock().unwrap().clear();

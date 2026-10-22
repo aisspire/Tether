@@ -12,7 +12,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "test:runtime": "node scripts/check-runtime.mjs",
     "test:ui": "node scripts/check-ui.mjs",
-    "test:bundle": "node scripts/check-bundle.mjs"
+    "test:bundle": "node scripts/check-bundle.mjs",
+    "test:environments": "node scripts/check-environments.mjs"
   },
   "dependencies": {
     "vue": "3.5.44"
