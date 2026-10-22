@@ -79,6 +79,8 @@ pub struct Runtime {
     pub auth_token: String,
     pub auth_origin: String,
     latency: Mutex<HashMap<String, Option<f64>>>,
+    pub external: Mutex<(Vec<crate::external::Match>, Option<String>)>,
+    pub external_gate: tokio::sync::Mutex<crate::external::Cache>,
     pub shutdown: watch::Sender<bool>,
     pub tool_cancel: watch::Sender<u64>,
 }
@@ -98,6 +100,8 @@ impl Runtime {
             auth_token: format!("{}{}", id(), id()),
             auth_origin,
             latency: Mutex::default(),
+            external: Mutex::default(),
+            external_gate: tokio::sync::Mutex::default(),
             shutdown,
             tool_cancel: watch::channel(0).0,
         })
@@ -118,14 +122,49 @@ impl Runtime {
             .values()
             .map(|p| p.view.clone())
             .collect::<Vec<_>>();
-        json!({"protocol":1,"instance":self.instance,"config":s.config,"revision":s.revision,"configError":s.error,"configPath":s.path,"groups":groups,"prompts":prompts,"latency":*self.latency.lock().unwrap()})
+        let external = self.external.lock().unwrap();
+        let external_matches = external
+            .0
+            .iter()
+            .filter(|m| {
+                s.config
+                    .rules
+                    .iter()
+                    .find(|r| r.id == m.rule_id)
+                    .or_else(|| {
+                        groups
+                            .iter()
+                            .flat_map(|g| g.rules.iter())
+                            .find(|r| r.id == m.rule_id)
+                    })
+                    .is_some_and(|r| r.same_intent(&m.rule))
+                    && s.config
+                        .hosts
+                        .iter()
+                        .find(|h| h.id == m.host.id)
+                        .or_else(|| {
+                            groups
+                                .iter()
+                                .map(|g| &g.snapshot.host)
+                                .find(|h| h.id == m.host.id)
+                        })
+                        .is_some_and(|h| h == &m.host)
+            })
+            .collect::<Vec<_>>();
+        json!({"externalMatches":external_matches,"externalCheckError":external.1,"protocol":1,"instance":self.instance,"config":s.config,"revision":s.revision,"configError":s.error,"configPath":s.path,"groups":groups,"prompts":prompts,"latency":*self.latency.lock().unwrap()})
     }
     pub async fn action(self: &Arc<Self>, value: Value) -> Result<Value> {
         if *self.shutdown.borrow() && value["action"] != "status" {
             return Err("后台正在退出，已拒绝新操作".into());
         }
         match value.get("action").and_then(Value::as_str).unwrap_or("") {
-            "status" => Ok(self.status()),
+            "status" => {
+                let rt = self.clone();
+                tokio::spawn(async move {
+                    crate::external::refresh(&rt, false).await;
+                });
+                Ok(self.status())
+            }
             "reload" => {
                 *self.store.lock().unwrap() = Store::open(&self.root);
                 Ok(self.status())
@@ -247,9 +286,7 @@ impl Runtime {
             }
             "files.read" | "files.write" | "keys.list" | "keys.generate" | "keys.public"
             | "keys.passphrase" | "keys.comment" | "agent.add" | "agent.remove"
-            | "knownHosts.find" | "knownHosts.remove" | "observe" => {
-                crate::tools::action(self, value).await
-            }
+            | "knownHosts.find" | "knownHosts.remove" => crate::tools::action(self, value).await,
             _ => Err("未知公共动作".into()),
         }
     }
@@ -359,6 +396,11 @@ impl Runtime {
         if epoch != self.epoch.load(Ordering::SeqCst) {
             return Err("启动已被停止操作取消".into());
         }
+        crate::external::refresh(self, true).await;
+        if epoch != self.epoch.load(Ordering::SeqCst) || *self.shutdown.borrow() {
+            return Err("启动已被停止操作取消".into());
+        }
+        let external = self.external.lock().unwrap().0.clone();
         let mut batches = HashMap::<String, (Snapshot, Vec<Rule>)>::new();
         let mut waits = vec![];
         for rule in requested {
@@ -415,6 +457,16 @@ impl Runtime {
                     true,
                     g.status.subscribe(),
                 ));
+                continue;
+            }
+            if let Some(m) = external.iter().find(|m| {
+                m.rule_id == rule.id && m.rule.same_intent(&rule) && m.host == snapshot.host
+            }) {
+                if m.verified {
+                    results.push(json!({"ruleId":rule.id,"state":"running","reused":true,"source":"external","pid":m.pid}));
+                } else {
+                    results.push(json!({"ruleId":rule.id,"state":"unverified","error":"终端 SSH 已连接，远程监听无法在本机确认；未重复启动或接管"}));
+                }
                 continue;
             }
             let has_conflict = gs
@@ -643,6 +695,14 @@ impl Runtime {
             self.groups.lock().unwrap().remove(&gid);
         }
     }
+    pub fn owned_rules(&self) -> Vec<(Host, Vec<Rule>)> {
+        self.groups
+            .lock()
+            .unwrap()
+            .values()
+            .map(|g| (g.view.snapshot.host.clone(), g.view.rules.clone()))
+            .collect()
+    }
     #[cfg(windows)]
     pub fn owned_pids(&self) -> Vec<u32> {
         self.groups
@@ -762,7 +822,7 @@ fn endpoint(s: &str) -> Result<(String, u16)> {
     let port = port.parse().map_err(|_| "转发端口格式无效")?;
     Ok((host.trim_matches(['[', ']']).into(), port))
 }
-fn inherited_rules(hid: &str, lines: &[String]) -> Result<Vec<Rule>> {
+pub(crate) fn inherited_rules(hid: &str, lines: &[String]) -> Result<Vec<Rule>> {
     lines
         .iter()
         .map(|line| {
@@ -799,7 +859,7 @@ fn inherited_rules(hid: &str, lines: &[String]) -> Result<Vec<Rule>> {
                 target,
                 target_port,
                 notes: "来自 SSH 生效配置（只读）".into(),
-                open_url: String::new(),
+                legacy_open_url: serde_json::Value::Null,
             })
         })
         .collect()

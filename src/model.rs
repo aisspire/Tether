@@ -58,8 +58,8 @@ pub struct Rule {
     pub target_port: u16,
     #[serde(default)]
     pub notes: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub open_url: String,
+    #[serde(default, rename = "openUrl", skip_serializing)]
+    pub legacy_open_url: serde_json::Value,
 }
 impl Rule {
     pub fn same_intent(&self, other: &Self) -> bool {
@@ -96,27 +96,6 @@ impl Rule {
             address(&self.target, false)?;
             if self.target_port == 0 {
                 return Err("目标端口须非零".into());
-            }
-        }
-        if !self.open_url.is_empty() {
-            if self
-                .open_url
-                .chars()
-                .any(|c| c.is_control() || c.is_whitespace())
-            {
-                return Err("网页地址包含无效空白或控制字符".into());
-            }
-            let uri = self
-                .open_url
-                .split('#')
-                .next()
-                .unwrap()
-                .parse::<axum::http::Uri>()
-                .map_err(|_| "网页地址无效")?;
-            if !matches!(uri.scheme_str(), Some("http" | "https"))
-                || uri.authority().is_none_or(|a| a.as_str().contains('@'))
-            {
-                return Err("网页地址须为不含凭据的 HTTP 或 HTTPS 地址".into());
             }
         }
         Ok(())
@@ -277,33 +256,26 @@ mod tests {
         })).unwrap()
     }
     #[test]
-    fn old_configs_keep_stable_references_and_accept_optional_web_link() {
+    fn old_configs_drop_web_shortcuts_and_keep_stable_references() {
         let mut c = config();
         assert!(c.validate().is_ok());
-        assert!(c.rules[0].open_url.is_empty());
-        c.rules[0].open_url = "https://127.0.0.1:18080/dashboard".into();
+        let mut old = serde_json::to_value(&c).unwrap();
+        old["rules"][0]["openUrl"] = serde_json::json!("https://old.example/");
+        c = serde_json::from_value(old).unwrap();
         assert!(c.validate().is_ok());
-        c.rules[0].open_url = "http://127.0.0.1:18080/#/dashboard".into();
-        assert!(c.validate().is_ok());
+        assert!(serde_json::to_value(&c).unwrap()["rules"][0]
+            .get("openUrl")
+            .is_none());
         let roundtrip: Config = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
         assert_eq!(roundtrip.plans[0].rule_ids, vec!["r"]);
         assert_eq!(roundtrip.hosts[0].id, "h");
     }
     #[test]
-    fn rejects_conflicting_user_and_non_web_shortcuts() {
+    fn rejects_conflicting_user() {
         let mut c = config();
         c.hosts[0].options.push("User=other".into());
         assert!(c.validate().unwrap_err().contains("用户"));
         c.hosts[0].options = vec!["User=admin".into()];
         assert!(c.validate().is_ok());
-        for url in [
-            "javascript:alert(1)",
-            "file:///secret",
-            "https://user:secret@host/",
-            "relative",
-        ] {
-            c.rules[0].open_url = url.into();
-            assert!(c.validate().is_err(), "{url}");
-        }
     }
 }

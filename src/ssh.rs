@@ -349,7 +349,7 @@ mod tests {
             target: "::1".into(),
             target_port: 90,
             notes: "".into(),
-            open_url: String::new(),
+            legacy_open_url: serde_json::Value::Null,
         };
         assert_eq!(r.spec(), "[::1]:80:[::1]:90");
     }

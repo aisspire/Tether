@@ -3,7 +3,7 @@ export const clone = <T>(value:T):T => JSON.parse(JSON.stringify(value))
 export const optionKey = (s:string) => s.split(/[=\s]/)[0]!.toLowerCase()
 export const parseOptions = (s:string) => s.split('\n').map(x=>x.trim()).filter(Boolean)
 export function ruleName(r:Rule) { return r.name.trim() || endpoint(r) }
-export function normalizeRule(r:Rule):Rule { return {...r,name:ruleName(r),openUrl:r.openUrl?.trim()?new URL(r.openUrl.trim()).href:''} }
+export function normalizeRule(r:Rule):Rule { return {...r,name:ruleName(r)} }
 const wildcard = (s:string) => ['', '*', '0.0.0.0', '::'].includes(s)
 export function listeningConflict(a:Rule,b:Rule) {
  return a.port===b.port && ((a.direction==='remote')===(b.direction==='remote')) && (a.direction!=='remote'||a.hostId===b.hostId) && (a.bind===b.bind||wildcard(a.bind)||wildcard(b.bind)||(['localhost','127.0.0.1','::1'].includes(a.bind)&&['localhost','127.0.0.1','::1'].includes(b.bind)))
@@ -16,7 +16,6 @@ export function ruleErrors(rules:Rule[]):Record<string,string[]> {
   if(r.direction!=='dynamic'&&(!Number.isInteger(r.targetPort)||r.targetPort<1||r.targetPort>65535))e.push('目标端口须为 1–65535 的整数')
   if(/[\s\[\]"'\\/]/.test(r.bind)||r.direction!=='dynamic'&&(!r.target||/[\s\[\]"'\\/]/.test(r.target)))e.push('地址无效，IPv6 无需方括号')
   if(rules.some(x=>x.id!==r.id&&listeningConflict(x,r)))e.push('监听地址和端口与本主机其他映射冲突')
-  if(r.openUrl){try{const u=new URL(r.openUrl);if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw Error()}catch{e.push('网页地址须为不含凭据的 HTTP 或 HTTPS 地址')}}
   if(e.length)errors[r.id]=e
  }
  return errors
@@ -31,7 +30,7 @@ export function importRules(text:string,hostId:string):Rule[] {
    const x=row as Partial<Rule>
    if(x.direction&&!['local','remote','dynamic'].includes(x.direction))throw Error(`第 ${i+1} 行方向无效`)
    const r={...newRule(hostId),...x,id:crypto.randomUUID(),hostId}
-   if(typeof r.bind!=='string'||typeof r.target!=='string'||typeof r.name!=='string'||typeof r.notes!=='string'||r.openUrl!==undefined&&typeof r.openUrl!=='string')throw Error(`第 ${i+1} 行字段类型无效`)
+   if(typeof r.bind!=='string'||typeof r.target!=='string'||typeof r.name!=='string'||typeof r.notes!=='string')throw Error(`第 ${i+1} 行字段类型无效`)
    return normalizeRule(r)
   })
  }

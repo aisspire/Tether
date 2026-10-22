@@ -19,15 +19,14 @@
   "rules": [{
     "id": "ops-web", "name": "管理页面", "hostId": "host-prod",
     "direction": "local", "bind": "127.0.0.1", "port": 18080,
-    "target": "127.0.0.1", "targetPort": 8080, "notes": "",
-    "openUrl": "http://127.0.0.1:18080"
+    "target": "127.0.0.1", "targetPort": 8080, "notes": ""
   }],
   "plans": [{"id":"daily","name":"日常","ruleIds":["ops-web"],"autoStart":false}],
   "keyFiles": [], "sshFiles": [], "theme": "system"
 }
 ```
 
-`openUrl` 是可选网页快捷入口，默认空；非空须为不含凭据的 HTTP／HTTPS 地址，不参与 SSH 运行语义或兼容指纹。旧版本 1 配置可直接读取，不改 ID 或计划引用。`category` 为兼容旧配置保留，界面不再提供主机分类。
+网页快捷入口已移除。旧版本 1 配置中的 `openUrl` 仅兼容读取，忽略其内容，后续保存不再写出，不改 ID 或计划引用。`category` 为兼容旧配置保留，界面不再提供主机分类。
 
 方向为 `local` / `remote` / `dynamic`；动态转发不需要目标。IPv6 地址不带方括号，运行编译时加括号。空或通配监听需由用户明确选择。`configFile: null` 使用原生默认配置；`none` 可选择无用户配置。高级 `options` 每项为一份原生 `-o Name=Value`，保持顺序与重复项；路径含空格时按 SSH 配置语法给值加双引号。
 
@@ -66,9 +65,8 @@
 | keys.passphrase / keys.comment | 已登记私钥 `path`，备注还需 `comment`；口令仍通过交互 |
 | agent.add / agent.remove | 已登记 `path`；不启用或停止系统 Agent 服务 |
 | knownHosts.find / knownHosts.remove | 已登记文件 `path`、`host`；删除须 `confirm: true` |
-| observe | Windows 可辨识 SSH 命令行，只读；标注本实例拥有或外部来源 |
 
-`ensure` 返回 `{instance, ready, results}`；每项含 `ruleId`、可选 `groupId`、`state`、`reused` 和 `error`。只有本次所有规则都确认 `running` 时 `ready: true`。`failed`、`pending`、`conflict`、`stopped`、`timeout` 均不满足前置依赖。资源等待不检测远端业务 HTTP 健康。
+`ensure` 返回 `{instance, ready, results}`；每项含 `ruleId`、可选 `groupId`、`state`、`reused` 和 `error`。只有本次所有规则都确认 `running` 时 `ready: true`。`failed`、`pending`、`conflict`、`stopped`、`timeout`、`unverified` 均不满足前置依赖。资源等待不检测远端业务 HTTP 健康。
 
 ## Oriel stdio-v1
 
@@ -91,3 +89,11 @@
 常用参数、目录覆盖行和原文共用有序 options。目录固定为 OpenSSH portable 10.0 文档的 102 项，不代表本机可用清单；原生 preview 和启动负责最终语义校验，目标内用户与 User 覆盖冲突由后台拒绝。映射批量导入支持制表符和 JSON，预览时检查字段及同主机监听冲突，保存前统一校验。
 
 启动结果提供逐项状态及仅重试未就绪的已登记映射，重试沿用该次请求的 overrides；成功通知短暂显示，错误和失败记录由用户关闭。编辑草稿绑定打开时的 revision，保存失败保留输入；设置原文绑定读取的文件路径与 revision，切换路径不允许把旧内容写入新文件。
+
+## 已知映射的终端连接检测（2026-10-22）
+
+`status` 读取触发后台最多每三秒一次的 Windows 只读检查，返回 `externalMatches: [{ruleId,pid,verified}]` 及可选 `externalCheckError`；不返回无关进程清单或原始命令行。仅匹配登记规则和托管列表内的临时规则；配置变更立即按当前规则和主机过滤旧关联，后续检查再更新进程／监听状态。状态读取不等待扫描完成，认证和界面轮询不受扫描阻塞。
+
+只解析显式转发及足够一致的目标、用户／端口和配置路径，不运行原生配置解析；不可靠地还原 config 内转发、跳板／代理、控制复用或不同别名之间的等价关系。本地／动态项需同一 PID 的已建立连接和监听，`verified: true`；远程项仅标识连接及参数，`verified: false`，并在显式 ensure 时返回 `unverified`。仅经过监听核对的项能返回 `{state:"running",reused:true,source:"external",pid}`，不建立托管组；停止和退出不影响它。
+
+密钥 `keys.list.files` 补充已验证格式的 `publicKey`，只读公钥文件，用于关联 Agent 身份；不返回私钥内容。界面自动读取并以文件列表及独立 Agent 区展示，支持搜索与按文件操作，不再显示 JSON。

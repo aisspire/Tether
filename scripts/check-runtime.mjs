@@ -48,6 +48,24 @@ let external
 try{
 await check('loopback API rejects anonymous and cross-origin control',async()=>{for(const headers of [{},{Authorization:`Bearer ${desc.token}`,Origin:'https://untrusted.example'}]){const r=await fetch(`${desc.origin}/api`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:'{"action":"stop","scope":"all"}'});assert.equal(r.status,403)}})
 await check('draft host preview validates without saving configuration',async()=>{const s=await api('status');const draft={...s.config.hosts[0],options:['Compression=no']};assert.equal((await api('preview',{host:draft})).effective.compression[0],'no');assert.deepEqual((await api('status')).config.hosts[0].options,[]);await assert.rejects(api('preview',{host:{...draft,destination:'admin@fixture',options:['User=other']}}))})
+await check('terminal SSH matches only known mappings, reuses verified listeners and stays unowned',async()=>{
+ if(!win)return;
+ const s=await api('status');s.config.hosts.push({...host,id:'terminal-host',name:'终端主机',configFile:include});
+ s.config.rules.push(rule('terminal',ports[13],{hostId:'terminal-host'}),rule('wrong-target',ports[13],{hostId:'terminal-host',targetPort:echoPort+1}),rule('unrelated',ports[14],{hostId:'terminal-host'}),rule('terminal-dynamic',ports[16],{hostId:'terminal-host',direction:'dynamic',target:'',targetPort:0}),rule('terminal-remote',ports[17],{hostId:'terminal-host',direction:'remote'}));
+ await api('save',{config:s.config,revision:s.revision});
+ external=spawn('ssh',['-NT','-F',include,'-L',`127.0.0.1:${ports[13]}:127.0.0.1:${echoPort}`,'-L',`127.0.0.1:${ports[15]}:127.0.0.1:${echoPort}`,'-D',`127.0.0.1:${ports[16]}`,'-R',`127.0.0.1:${ports[17]}:127.0.0.1:${echoPort}`,'fixture'],{stdio:'ignore'});
+ await waitFor(async()=>{try{await echoTest(ports[13]);return true}catch{return false}});
+ const detected=await waitFor(async()=>{const s=await api('status');assert.equal(s.externalCheckError,null);return s.externalMatches.find(m=>m.ruleId==='terminal')},20000);
+ assert.equal(detected.pid,external.pid);assert.equal(detected.verified,true);
+ const matched=(await api('status')).externalMatches;assert.deepEqual(matched.map(m=>m.ruleId),['terminal','terminal-dynamic','terminal-remote']);assert.equal(matched.find(m=>m.ruleId==='terminal-dynamic').verified,true);assert.equal(matched.find(m=>m.ruleId==='terminal-remote').verified,false);
+ const unverified=await api('ensure',{request:{ruleIds:['terminal-remote']}});assert.equal(unverified.ready,false);assert.equal(unverified.results[0].state,'unverified');
+ const changed=await api('status');changed.config.rules.find(r=>r.id==='terminal').targetPort++;await api('save',{config:changed.config,revision:changed.revision});assert.ok(!(await api('status')).externalMatches.some(m=>m.ruleId==='terminal'));
+ const restored=await api('status');restored.config.rules.find(r=>r.id==='terminal').targetPort--;await api('save',{config:restored.config,revision:restored.revision});
+ const reused=await api('ensure',{request:{ruleIds:['terminal']}});assert.equal(reused.ready,true);assert.equal(reused.results[0].source,'external');assert.equal(reused.results[0].reused,true);
+ assert.equal((await api('status')).groups.length,0);await api('stop',{scope:'all'});await echoTest(ports[13]);assert.equal(external.exitCode,null);
+ external.kill();await waitFor(()=>external.exitCode!==null||external.signalCode!==null);await waitFor(async()=>!(await api('status')).externalMatches.length,20000);
+ const end=await api('status');end.config.rules=end.config.rules.filter(r=>r.hostId!=='terminal-host');end.config.hosts=end.config.hosts.filter(h=>h.id!=='terminal-host');await api('save',{config:end.config,revision:end.revision});
+})
 await check('native Include / Match snapshot preserves effective config',async()=>{const p=await api('preview',{hostId:'h'});assert.equal(p.effective.hostname[0],'127.0.0.1');assert.equal(p.effective.compression[0],'yes');assert.equal(p.inheritedForwards.length,1)})
 await check('batch local forwarding uses one SSH and carries real traffic',async()=>{const r=await ensure(['a','b']);assert.equal(r.ready,true,JSON.stringify(r));const s=await api('status');assert.equal(s.groups.filter(g=>g.desired).length,1);await echoTest(ports[0]);await echoTest(ports[1]);await echoTest(ports[8])})
 const before=await api('status'),old=before.groups.find(g=>g.desired),oldPid=old.pid

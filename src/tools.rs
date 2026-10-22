@@ -113,7 +113,7 @@ pub async fn action(rt: &Arc<Runtime>, v: Value) -> Result<Value> {
                 let mut cmd = tool("ssh-keygen");
                 cmd.args(["-lf"]).arg(&public).args(["-E", "sha256"]);
                 let fingerprint = ssh::output(cmd, 5).await;
-                keys.push(json!({"path":p,"publicPath":public,"privateFile":!p.ends_with(".pub")&&path.exists(),"publicFile":public.exists(),"fingerprint":fingerprint.as_ref().ok(),"error":fingerprint.as_ref().err()}));
+                keys.push(json!({"path":p,"publicPath":public,"privateFile":!p.ends_with(".pub")&&path.exists(),"publicFile":public.exists(),"publicKey":std::fs::read_to_string(&public).ok().filter(|text|["ssh-", "ecdsa-", "sk-"].iter().any(|prefix|text.starts_with(prefix))),"fingerprint":fingerprint.as_ref().ok(),"error":fingerprint.as_ref().err()}));
             }
             let mut cmd = tool("ssh-add");
             cmd.arg("-L");
@@ -214,39 +214,6 @@ pub async fn action(rt: &Arc<Runtime>, v: Value) -> Result<Value> {
             .arg(p);
             Ok(json!({"result":ssh::output(cmd,5).await?}))
         }
-        "observe" => observe(rt).await,
         _ => Err("未知工具动作".into()),
-    }
-}
-async fn observe(rt: &Runtime) -> Result<Value> {
-    #[cfg(windows)]
-    {
-        let mut cmd = tool("powershell.exe");
-        cmd.args(["-NoProfile","-NonInteractive","-Command", "@(Get-CimInstance Win32_Process -Filter \"Name='ssh.exe'\" | Select-Object ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine) | ConvertTo-Json -Compress"]);
-        let out = ssh::output(cmd, 10).await?;
-        let mut data = serde_json::from_str::<Value>(&out).unwrap_or(json!([]));
-        let owned = rt.owned_pids();
-        if let Some(processes) = data.as_array_mut() {
-            for process in processes {
-                process["source"] = json!(if process["ProcessId"]
-                    .as_u64()
-                    .is_some_and(|id| owned.contains(&(id as u32)))
-                {
-                    "tether"
-                } else {
-                    "external"
-                });
-            }
-        }
-        Ok(
-            json!({"readOnly":true,"processes":data,"scope":"可读取的 ssh.exe 进程命令行；不推断配置继承或远程监听"}),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = rt;
-        Ok(
-            json!({"readOnly":true,"processes":[],"scope":"外部观测仅在 Windows 实现；不推断未知进程"}),
-        )
     }
 }
