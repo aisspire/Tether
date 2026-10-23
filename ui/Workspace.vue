@@ -13,10 +13,13 @@ import userGuide from '../USER_GUIDE.md?raw'
 import { SessionKey,type Environment,type EnvironmentSession,newHost,newRule,endpoint,states,type Host,type Rule,type Plan,type State,type Config,type Group,type Preview,type StartResult } from './api'
 import { clone,normalizeRule,ruleErrors,pruneRules,hostChanged,browserAddress,optionKey } from './editor'
 import { sshOptions } from './ssh-options'
+import { useRowMenus } from './useRowMenus'
 const props=defineProps<{session:EnvironmentSession;initial:State;environment:Environment;distributions:{name:string;running:boolean;version:number}[];switching:boolean;environmentError:string}>()
 const emit=defineEmits<{switch:[distro?:string];enumerate:[]}>()
 provide(SessionKey,props.session)
 const api=props.session.request
+const shell=ref<HTMLElement>()
+useRowMenus(shell)
 const filePanel=ref<InstanceType<typeof FilePanel>>(),environmentDialog=ref<HTMLDialogElement>()
 const state=ref<State|null>(props.initial),page=ref('主机'),search=ref(''),filter=ref('all'),error=ref(''),notice=ref('')
 const pendingKeys=ref(new Set<string>()),actionErrors=ref<Record<string,string>>({})
@@ -122,7 +125,7 @@ onMounted(async()=>{applyTheme();await refresh();timer=setInterval(()=>void refr
 onUnmounted(()=>{clearInterval(timer);clearTimeout(noticeTimer);media.removeEventListener('change',applyTheme);window.removeEventListener('beforeunload',beforeUnload);window.removeEventListener('keydown',shortcut)})
 </script>
 <template>
-<div class="shell">
+<div ref="shell" class="shell">
  <aside>
   <div class="brand"><span class="mark"><UiIcon name="link" :size="20" /></span><div class="brand-copy"><strong>Tether</strong><span>SSH 转发</span></div></div>
   <nav aria-label="主要导航"><button v-for="item in navigation" :key="item.label" :class="{active:page===item.label}" :aria-current="page===item.label?'page':undefined" :aria-label="item.label" :title="item.label" @click="navigate(item.label)"><UiIcon :name="item.icon" :size="19" /><span class="nav-label">{{item.label}}</span></button></nav>

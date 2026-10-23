@@ -32,6 +32,11 @@ async function hostAction(text){await cdp.evaluate(`(()=>{const menu=document.qu
 async function summary(text,scope='.editor-dialog'){await cdp.evaluate(`(()=>{const s=[...document.querySelectorAll(${JSON.stringify(scope+' summary')})].filter(${visible}).find(s=>s.textContent.trim().startsWith(${JSON.stringify(text)}));if(!s)throw Error('missing summary '+${JSON.stringify(text)});s.click()})()`);await delay(50)}
 const closed=()=>until(()=>cdp.evaluate(`!document.querySelector('.editor-dialog[open]')`),'editor save')
 const escape=()=>cdp.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27})
+async function pointerClick(selector){
+ const {x,y}=await cdp.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`)
+ await cdp.command('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1})
+ await cdp.command('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1})
+}
 async function screenshot(name){await writeFile(path.join(root,name),Buffer.from((await cdp.command('Page.captureScreenshot',{format:'png'})).data,'base64'))}
 try{
 const port=await until(async()=>Number((await readFile(path.join(root,'profile/DevToolsActivePort'),'utf8')).split('\n')[0]),'Edge CDP')
@@ -40,8 +45,61 @@ cdp=await new Cdp().connect(target.webSocketDebuggerUrl);cdp.socket.addEventList
 await cdp.command('Page.enable');await cdp.command('Runtime.enable');await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false});await cdp.command('Page.navigate',{url:desc.pageUrl});await until(()=>cdp.evaluate(`document.body.textContent.includes('添加第一台 SSH 主机')`))
 await check('bundled help, Escape and focus restoration',async()=>{await click('使用说明');await until(()=>cdp.evaluate(`document.querySelector('.help-dialog[open]')?.textContent.includes('配置与运行状态')`));await screenshot('help-light.png');await escape();await until(()=>cdp.evaluate(`!document.querySelector('.help-dialog[open]')`));await until(()=>cdp.evaluate(`document.activeElement.textContent.trim()==='使用说明'`),'help focus restoration')})
 await check('host owns mappings and common forms avoid duplicate user/category fields',async()=>{assert.deepEqual(await cdp.evaluate(`[...document.querySelectorAll('nav button')].map(x=>x.textContent.trim())`),['主机','计划','密钥','设置']);await click('添加主机');await fill('主机名称','开发机 A');await fill('SSH 目标 / 别名','fixture');await summary('本机与连接行为');await fill('SSH 配置路径',sshConfig);assert.equal(await cdp.evaluate(`[...document.querySelectorAll('.editor-dialog label')].some(l=>['SSH 用户','分组'].includes(l.firstChild.textContent.trim()))`),false);await click('端口映射','.editor-dialog',true);await click('添加映射','.editor-dialog');await fill('映射名称','Web');await click('保存','.editor-dialog');await closed();const s=await api('status');assert.equal(s.config.hosts.length,1);assert.equal(s.config.rules[0].hostId,s.config.hosts[0].id);assert.equal(await cdp.evaluate(`document.querySelectorAll('.registered').length`),1)})
+await check('row menus dismiss outside, switch exclusively, close on Escape and preserve actions',async()=>{
+ const host='.host-menu',rule='.rule .row-menu'
+ const open=selector=>until(()=>cdp.evaluate(`document.querySelector(${JSON.stringify(selector)}).open`),'row menu open')
+ const shut=selector=>until(()=>cdp.evaluate(`!document.querySelector(${JSON.stringify(selector)}).open`),'row menu closed')
+ await pointerClick(host+' > summary');await open(host)
+ await pointerClick('main > header h1');await shut(host)
+ await pointerClick(rule+' > summary');await open(rule)
+ await pointerClick('main > header h1');await shut(rule)
+ await pointerClick(host+' > summary');await open(host)
+ await pointerClick(rule+' > summary');await open(rule);await shut(host)
+ // Keyboard activation has no pointerdown; toggle must still close the previous menu.
+ await cdp.evaluate(`document.querySelector('.host-menu > summary').focus()`)
+ await cdp.command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13})
+ await cdp.command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13})
+ await open(host);await shut(rule)
+ await cdp.evaluate(`document.querySelector('.host-menu button').focus()`)
+ await escape();await shut(host)
+ assert.equal(await cdp.evaluate(`document.activeElement===document.querySelector('.host-menu > summary')`),true)
+ await pointerClick(rule+' > summary');await open(rule)
+ await escape();await shut(rule)
+ assert.equal(await cdp.evaluate(`document.activeElement===document.querySelector('.rule .row-menu > summary')`),true)
+ await pointerClick(host+' > summary');await open(host)
+ await pointerClick(host+' > summary');await shut(host)
+ await pointerClick(rule+' > summary');await open(rule)
+ await click('编辑映射',rule);await shut(rule)
+ await until(()=>cdp.evaluate(`!!document.querySelector('.editor-dialog[open]')`),'mapping editor opens')
+ await click('取消','.editor-dialog');await closed()
+ // Ordinary disclosure panels are not menus and must remain open on outside clicks.
+ await cdp.evaluate(`document.querySelector('.temporary-options > summary').click()`)
+ await pointerClick('main > header h1')
+ assert.equal(await cdp.evaluate(`document.querySelector('.temporary-options').open`),true)
+ await cdp.evaluate(`document.querySelector('.temporary-options > summary').click()`)
+})
 await check('TCP latency uses a visible success color and renders the measured result',async()=>{await cdp.evaluate(`document.querySelector('.host-menu > summary').click()`);await delay(60);await screenshot('host-menu-light.png');await cdp.evaluate(`document.querySelector('.host-menu')?.removeAttribute('open')`);await hostAction('测试 TCP 响应');await until(()=>cdp.evaluate(`document.querySelector('.latency')?.classList.contains('measured')`));assert.match(await cdp.evaluate(`document.querySelector('.latency').textContent`),/\d+(\.\d+)? ms/);assert.equal(await cdp.evaluate(`getComputedStyle(document.querySelector('.latency')).color===getComputedStyle(document.querySelector('h2')).color`),false);assert.equal(await cdp.evaluate(`document.querySelector('.external')===null`),true);await click('编辑主机');await click('端口映射','.editor-dialog',true);assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog').textContent.includes('网页地址')`),false);await click('取消','.editor-dialog');await closed()})
 await check('keys load automatically as file rows with public-only and missing states',async()=>{const privatePath=path.join(root,'ui-identity');execFileSync('ssh-keygen',['-q','-t','ed25519','-N','','-f',privatePath]);const s=await api('status');s.config.keyFiles=[privatePath,privatePath+'.pub',path.join(root,'missing-key')];await api('save',{config:s.config,revision:s.revision});await delay(1200);await click('密钥','nav');await until(()=>cdp.evaluate(`document.querySelectorAll('.key-row').length===3&&document.querySelector('.key-fingerprint')?.textContent.includes('SHA256:')`));assert.equal(await cdp.evaluate(`document.querySelectorAll('.key-list .key-kind')[1].textContent`),'仅公钥');assert.equal(await cdp.evaluate(`document.querySelectorAll('.key-list .key-kind')[2].textContent`),'文件缺失');assert.equal(await cdp.evaluate(`document.querySelectorAll('.key-list .key-row')[1].querySelectorAll('button')[1].disabled`),true);assert.equal(await cdp.evaluate(`document.querySelector('.key-list').textContent.includes('"privateFile"')`),false);await screenshot('keys-light.png');await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});await cdp.evaluate(`document.documentElement.dataset.theme='dark'`);assert.equal(await cdp.evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);await screenshot('keys-dark-narrow.png');await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false});await cdp.evaluate(`document.documentElement.dataset.theme='light'`);await click('主机','nav')})
+await check('key menus preserve inputs and nested details, and dismiss outside at narrow widths',async()=>{
+ await click('密钥','nav')
+ await until(()=>cdp.evaluate(`!!document.querySelector('.key-row .menu-public-key')`),'key menu content')
+ await cdp.evaluate(`document.querySelector('.key-row .row-menu > summary').click()`)
+ await fill('公钥备注','菜单内草稿','.key-row .menu-panel')
+ await pointerClick('.key-row .menu-panel input')
+ assert.equal(await cdp.evaluate(`document.querySelector('.key-row .row-menu').open`),true)
+ await cdp.evaluate(`document.querySelector('.key-row .menu-public-key > summary').click()`)
+ assert.equal(await cdp.evaluate(`document.querySelector('.key-row .row-menu').open&&document.querySelector('.key-row .menu-public-key').open`),true)
+ assert.equal(await cdp.evaluate(`document.querySelector('.key-row .menu-panel input').value`),'菜单内草稿')
+ await escape()
+ await until(()=>cdp.evaluate(`!document.querySelector('.key-row .row-menu').open`),'key Escape')
+ assert.equal(await cdp.evaluate(`document.activeElement===document.querySelector('.key-row .row-menu > summary')`),true)
+ await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false})
+ await cdp.evaluate(`document.querySelector('.key-row .row-menu > summary').click()`)
+ await pointerClick('main > header h1')
+ assert.equal(await cdp.evaluate(`!document.querySelector('.key-row .row-menu').open`),true)
+ await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false})
+ await click('主机','nav')
+})
 await check('settings open and register files, locate full text, protect dirty buffers, and keep private keys read-only',async()=>{
  const file=path.join(root,'plain-file');await writeFile(file,'first match\nsecond match\nlast\n');await click('设置','nav');await fill('文件绝对路径',file,'.files-panel');await click('打开','.files-panel');await until(()=>cdp.evaluate(`document.querySelector('.files-panel textarea')?.value.includes('second match')`));
  assert.ok((await api('status')).config.sshFiles.includes(file));assert.ok(!(await api('status')).config.keyFiles.includes(file));await fill('搜索文件全文','match','.files-panel');assert.equal(await cdp.evaluate(`document.querySelector('.file-search output').textContent.includes('2 处匹配')`),true);await click('下一个','.file-search');assert.equal(await cdp.evaluate(`document.querySelector('.files-panel textarea').selectionStart`),6);await click('下一个','.file-search');assert.equal(await cdp.evaluate(`document.querySelector('.files-panel textarea').selectionStart`),19);await screenshot('settings-light.png');

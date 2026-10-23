@@ -1,5 +1,12 @@
 # 实际验证与剩余工作
 
+## 2026-10-23：“更多”菜单自动收起
+
+- 主机、映射及密钥的行菜单统一处理外部点击、Escape 关闭与焦点恢复；打开另一菜单会收起旧菜单，选择直接操作项后收起。菜单内输入和公钥详情展开保持可用，普通详情折叠面板不受影响；组件卸载时清理监听。
+- `node node_modules/vue-tsc/bin/vue-tsc.js --noEmit`、`node --check scripts/check-ui.mjs` 和 `git diff --check` 通过。
+- 已向现有 Windows Edge UI 检查增加外部鼠标点击、菜单切换、键盘激活、Escape 焦点恢复、操作项执行、普通详情保持展开，以及密钥输入、公钥展开和窄屏关闭的回归场景；本轮未执行浏览器交互检查。
+- 当前 WSL 环境缺少项目所需的 Linux Rolldown 原生绑定，`npm run build` 在 Vite 阶段失败；尝试启动现有 Windows 程序时出现 `UtilBindVsockAnyPort: socket failed 1`，无法运行 Windows Edge 检查。未安装依赖、改动锁文件或生成交付包。
+
 ## 2026-10-23：Windows 打包调用 WSL 的 Cargo 路径
 
 - 从 Windows 复现旧入口失败：默认 Ubuntu 的非交互式 shell 不包含 `~/.cargo/bin`，报 `sh: 1: cargo: not found`；现有 Rust、musl 目标和链接器均可用。
