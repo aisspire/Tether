@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import UiIcon from './UiIcon.vue'
 import { sshOptions, type SshOption } from './ssh-options'
 import { optionKey, parseOptions } from './editor'
 const model=defineModel<string[]>({required:true})
@@ -17,14 +18,17 @@ const raw=computed({get:()=>model.value.join('\n'),set:s=>model.value=parseOptio
 function inputType(d?:SshOption){return d?.numeric?'number':'text'}
 </script>
 <template>
- <div class="fields common-options"><label v-for="name in common" :key="name">{{ definition(name)?.label }}<select v-if="definition(name)?.choices" :value="value(name)" @change="set(name,($event.target as HTMLSelectElement).value)"><option value="">继承配置 / 默认</option><option v-for="v in definition(name)!.choices" :key="v">{{v}}</option></select><input v-else :type="inputType(definition(name))" :value="value(name)" placeholder="继承配置 / 默认" @input="set(name,($event.target as HTMLInputElement).value)"><small>{{ value(name)?'手动覆盖':'继承 SSH 配置或本机默认' }}<button v-if="value(name)" type="button" class="text-button" @click="set(name,'')">恢复继承</button></small></label></div>
- <details class="option-catalog"><summary>全部 SSH 参数 · {{sshOptions.length}} 项</summary>
-  <p class="muted">目录基于 OpenSSH 10.0，实际支持以本机客户端解析结果为准。</p>
-  <label>搜索参数<input v-model="search" placeholder="名称或用途，例如认证、压缩"></label>
-  <p v-if="!catalog.length" class="muted">没有匹配的参数。</p><label>参数目录<select v-model="picked" size="7" aria-label="SSH 参数目录"><option v-for="d in catalog" :key="d.name" :value="d.name">{{d.name}} · {{d.label}}{{d.restricted?' · 专用设置':''}}</option></select></label>
-  <p v-if="definition(picked)?.restricted" class="muted">{{definition(picked)?.restricted}}</p><p v-else-if="definition(picked)?.repeatable" class="muted">此参数允许添加多项，保留填写顺序。</p>
-  <div class="actions"><button type="button" :disabled="!definition(picked)||!!definition(picked)?.restricted" @click="add">添加覆盖项</button><a :href="`https://man.openbsd.org/ssh_config#${picked}`" target="_blank" rel="noopener noreferrer">参数说明</a></div>
- </details>
- <div v-if="model.length" class="option-rows"><div v-for="(line,i) in model" :key="i" class="option-row"><label>{{definition(optionKey(line))?.label||line.split('=')[0]}} <small>{{line.split('=')[0]}} · 手动覆盖</small><select v-if="definition(optionKey(line))?.choices" :value="line.split('=').slice(1).join('=')" @change="edit(i,($event.target as HTMLSelectElement).value)"><option v-if="!definition(optionKey(line))!.choices!.includes(line.split('=').slice(1).join('='))" :value="line.split('=').slice(1).join('=')">{{line.split('=').slice(1).join('=')}}</option><option v-for="v in definition(optionKey(line))!.choices" :key="v">{{v}}</option></select><input v-else required :type="inputType(definition(optionKey(line)))" :value="line.split('=').slice(1).join('=')" @input="edit(i,($event.target as HTMLInputElement).value)"></label><button type="button" :aria-label="`移除 ${line.split('=')[0]} 覆盖`" @click="remove(i)">恢复继承</button></div></div>
- <details><summary>高级有序 -o 原文</summary><label>每行 Name=Value<textarea v-model="raw" rows="5" spellcheck="false"></textarea></label><p class="muted">与上方共用同一份配置。单值通常首次值优先，多值参数保留顺序。</p></details>
+ <div class="option-block">
+  <div class="block-heading"><span>常用参数</span><small>留空即继承</small></div>
+  <div class="fields common-options"><label v-for="name in common" :key="name">{{ definition(name)?.label }}<select v-if="definition(name)?.choices" :value="value(name)" @change="set(name,($event.target as HTMLSelectElement).value)"><option value="">继承配置 / 默认</option><option v-for="v in definition(name)!.choices" :key="v">{{v}}</option></select><input v-else :type="inputType(definition(name))" :value="value(name)" placeholder="继承配置 / 默认" @input="set(name,($event.target as HTMLInputElement).value)"><small>{{ value(name)?'手动覆盖':'继承 SSH 配置或本机默认' }}<button v-if="value(name)" type="button" class="text-button" @click="set(name,'')">恢复继承</button></small></label></div>
+  <details class="option-catalog"><summary><span>全部 SSH 参数 · {{sshOptions.length}} 项</span><UiIcon name="chevron-down" :size="15" class="summary-chevron" /></summary>
+   <p class="muted">目录基于 OpenSSH 10.0，实际支持以本机客户端解析结果为准。</p>
+   <label class="search-label">搜索参数<input v-model="search" placeholder="名称或用途，例如认证、压缩"></label>
+   <p v-if="!catalog.length" class="muted">没有匹配的参数。</p><label>参数目录<select v-model="picked" size="7" aria-label="SSH 参数目录"><option v-for="d in catalog" :key="d.name" :value="d.name">{{d.name}} · {{d.label}}{{d.restricted?' · 专用设置':''}}</option></select></label>
+   <p v-if="definition(picked)?.restricted" class="muted">{{definition(picked)?.restricted}}</p><p v-else-if="definition(picked)?.repeatable" class="muted">此参数允许添加多项，保留填写顺序。</p>
+   <div class="actions"><button type="button" :disabled="!definition(picked)||!!definition(picked)?.restricted" @click="add"><UiIcon name="plus" :size="15" />添加覆盖项</button><a :href="`https://man.openbsd.org/ssh_config#${picked}`" target="_blank" rel="noopener noreferrer">参数说明</a></div>
+  </details>
+  <div v-if="model.length" class="option-rows"><div v-for="(line,i) in model" :key="i" class="option-row"><label>{{definition(optionKey(line))?.label||line.split('=')[0]}} <small>{{line.split('=')[0]}} · 手动覆盖</small><select v-if="definition(optionKey(line))?.choices" :value="line.split('=').slice(1).join('=')" @change="edit(i,($event.target as HTMLSelectElement).value)"><option v-if="!definition(optionKey(line))!.choices!.includes(line.split('=').slice(1).join('='))" :value="line.split('=').slice(1).join('=')">{{line.split('=').slice(1).join('=')}}</option><option v-for="v in definition(optionKey(line))!.choices" :key="v">{{v}}</option></select><input v-else required :type="inputType(definition(optionKey(line)))" :value="line.split('=').slice(1).join('=')" @input="edit(i,($event.target as HTMLInputElement).value)"></label><button type="button" class="icon-button danger" :title="`移除 ${line.split('=')[0]} 覆盖`" :aria-label="`移除 ${line.split('=')[0]} 覆盖`" @click="remove(i)"><UiIcon name="close" :size="15" /><span class="sr-only">恢复继承</span></button></div></div>
+  <details class="raw-options"><summary><span>高级有序 -o 原文</span><UiIcon name="chevron-down" :size="15" class="summary-chevron" /></summary><label>每行 Name=Value<textarea v-model="raw" rows="5" spellcheck="false"></textarea></label><p class="muted">与上方共用同一份配置。单值通常首次值优先，多值参数保留顺序。</p></details>
+ </div>
 </template>

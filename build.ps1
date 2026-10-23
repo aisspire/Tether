@@ -17,8 +17,9 @@ try {
         if ($WslDistribution) { $wslArgs += @('--distribution', $WslDistribution) }
         $linuxRoot = (& wsl.exe @wslArgs --exec wslpath -a -u $PSScriptRoot).Trim()
         if ($LASTEXITCODE) { throw 'WSL path conversion failed; provide -LinuxBinary with an existing Linux x64 musl build.' }
-        $mode = if ($DebugBuild) { '' } else { '--release' }
-        & wsl.exe @wslArgs --cd $linuxRoot --exec sh -lc "CARGO_TARGET_DIR=target/linux cargo build --locked --target x86_64-unknown-linux-musl $mode"
+        $linuxBuildArgs = @()
+        if (-not $DebugBuild) { $linuxBuildArgs += '--release' }
+        & wsl.exe @wslArgs --cd $linuxRoot --exec sh scripts/build-linux.sh @linuxBuildArgs
         if ($LASTEXITCODE) { throw 'Linux static build failed. Check existing cargo, musl target and linker; no tools were installed.' }
         $LinuxBinary = Join-Path $PSScriptRoot "target/linux/x86_64-unknown-linux-musl/$profile/tether"
     }

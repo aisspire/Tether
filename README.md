@@ -18,7 +18,9 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 `build.cmd` 调用同目录的 `build.ps1` 并透传参数，CMD 与 PowerShell 均可使用；例如 `build.cmd -DebugBuild`。从 Oriel 父仓库可执行 `plugins\external\tether\build.cmd`，脚本会自动定位 Tether 目录。父仓库根目录的 `build.cmd` 只打包 Oriel，不会打包或安装 Tether。
 
-构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
+构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`tether-linux-x64`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
+
+Windows 打包脚本会调用默认 WSL 发行版构建 Linux x64 静态后台，需要该环境已有 Rust、`x86_64-unknown-linux-musl` 目标及对应链接器。WSL 构建先查找 PATH 中的 Cargo，再查找 `CARGO_HOME/bin` 和 `~/.cargo/bin`，仅调整构建进程的 PATH，不修改 shell 配置或安装工具。可用 `-WslDistribution Ubuntu` 指定已有发行版；已有 Linux x64 静态产物时，可用 `-LinuxBinary 路径` 跳过 WSL 编译。失败时以汇总提示之前的 Cargo 输出定位具体原因。
 
 `serve` 输出一行 JSON，包含实际后台身份和 `pageUrl`。在浏览器打开该地址即可在主机内批量添加映射，并选择主机下的映射形成计划；后台运行期间可关闭页面，转发继续。终端按 Ctrl+C 退出后台会停止托管连接。只监听随机 IPv4 回环端口，不改变系统代理。
 
