@@ -15,7 +15,10 @@ defineProps<{ name: string; size?: number }>()
     aria-hidden="true"
     focusable="false"
   >
-    <template v-if="name === 'host'">
+    <template v-if="name === 'grip'">
+      <path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3" />
+    </template>
+    <template v-else-if="name === 'host'">
       <rect x="3.5" y="4" width="17" height="7" rx="2" />
       <rect x="3.5" y="13" width="17" height="7" rx="2" />
       <path d="M7 7.5h.01M7 16.5h.01M11 7.5h5M11 16.5h5" />

@@ -65,7 +65,10 @@ cargo test --locked
 npm run build
 npm run test:runtime
 npm run test:ui
+npm run test:interactions
 ```
+
+`test:interactions` 可在已有 Node 依赖的环境运行，覆盖窗外完整点击、跨边界误触、稳定 ID 排序及页面／弹窗边缘滚动与取消；不代替 Windows Edge 的布局与真实交互验收。
 
 原生检查使用临时密钥、受控回环 SSH2 服务、隔离目录与测试浏览器配置，不连接真实远端。运行检查前设置 `CARGO_TARGET_DIR=target/windows` 并构建 Windows Debug 程序。测试仅对自己新建的目录设置 ACL。Linux 可运行后台辅助验证，但不作为产品平台承诺。
 

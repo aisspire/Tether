@@ -37,6 +37,18 @@ async function pointerClick(selector){
  await cdp.command('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1})
  await cdp.command('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1})
 }
+async function pointerGesture(start,end=start){
+ await cdp.command('Input.dispatchMouseEvent',{type:'mouseMoved',...start})
+ await cdp.command('Input.dispatchMouseEvent',{type:'mousePressed',...start,button:'left',clickCount:1})
+ await cdp.command('Input.dispatchMouseEvent',{type:'mouseMoved',...end,buttons:1})
+ await cdp.command('Input.dispatchMouseEvent',{type:'mouseReleased',...end,button:'left',clickCount:1})
+ await delay(80)
+}
+async function dialogPoints(selector){return cdp.evaluate(`(()=>{const d=document.querySelector(${JSON.stringify(selector)}),r=d.getBoundingClientRect();return {inside:{x:r.left+8,y:r.top+8},outside:{x:Math.max(1,r.left-6),y:Math.max(1,r.top-6)}}})()`)}
+async function pinnedClose(selector){
+ await cdp.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollTop=100000`);await delay(80)
+ assert.equal(await cdp.evaluate(`(()=>{const d=document.querySelector(${JSON.stringify(selector)}),b=d.querySelector('.dialog-heading > button'),r=b.getBoundingClientRect(),box=d.getBoundingClientRect();return r.top>=box.top&&r.bottom<=Math.min(innerHeight,box.bottom)&&box.right-r.right<40&&b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()`),true,'close stays visible at the upper right after scrolling')
+}
 async function screenshot(name){await writeFile(path.join(root,name),Buffer.from((await cdp.command('Page.captureScreenshot',{format:'png'})).data,'base64'))}
 try{
 const port=await until(async()=>Number((await readFile(path.join(root,'profile/DevToolsActivePort'),'utf8')).split('\n')[0]),'Edge CDP')
@@ -45,6 +57,26 @@ cdp=await new Cdp().connect(target.webSocketDebuggerUrl);cdp.socket.addEventList
 await cdp.command('Page.enable');await cdp.command('Runtime.enable');await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false});await cdp.command('Page.navigate',{url:desc.pageUrl});await until(()=>cdp.evaluate(`document.body.textContent.includes('添加第一台 SSH 主机')`))
 await check('bundled help, Escape and focus restoration',async()=>{await click('使用说明');await until(()=>cdp.evaluate(`document.querySelector('.help-dialog[open]')?.textContent.includes('配置与运行状态')`));await screenshot('help-light.png');await escape();await until(()=>cdp.evaluate(`!document.querySelector('.help-dialog[open]')`));await until(()=>cdp.evaluate(`document.activeElement.textContent.trim()==='使用说明'`),'help focus restoration')})
 await check('host owns mappings and common forms avoid duplicate user/category fields',async()=>{assert.deepEqual(await cdp.evaluate(`[...document.querySelectorAll('nav button')].map(x=>x.textContent.trim())`),['主机','计划','密钥','设置']);await click('添加主机');await fill('主机名称','开发机 A');await fill('SSH 目标 / 别名','fixture');await summary('本机与连接行为');await fill('SSH 配置路径',sshConfig);assert.equal(await cdp.evaluate(`[...document.querySelectorAll('.editor-dialog label')].some(l=>['SSH 用户','分组'].includes(l.firstChild.textContent.trim()))`),false);await click('端口映射','.editor-dialog',true);await click('添加映射','.editor-dialog');await fill('映射名称','Web');await click('保存','.editor-dialog');await closed();const s=await api('status');assert.equal(s.config.hosts.length,1);assert.equal(s.config.rules[0].hostId,s.config.hosts[0].id);assert.equal(await cdp.evaluate(`document.querySelectorAll('.registered').length`),1)})
+await check('dialog backdrop requires both ends outside and padding stays inside',async()=>{
+ for(const selector of ['.help-dialog','.environment-dialog','.editor-dialog']){
+  if(selector==='.help-dialog')await click('使用说明');else if(selector==='.environment-dialog')await cdp.evaluate(`document.querySelector('.environment button').click()`);else await click('编辑主机')
+  const {inside,outside}=await dialogPoints(selector)
+  await pointerGesture(inside,outside);assert.equal(await cdp.evaluate(`document.querySelector('${selector}').open`),true)
+  assert.equal(await cdp.evaluate(`document.querySelector('.confirm-dialog').open`),false)
+  await pointerGesture(outside,inside);assert.equal(await cdp.evaluate(`document.querySelector('${selector}').open`),true)
+  await pointerGesture(inside);assert.equal(await cdp.evaluate(`document.querySelector('${selector}').open`),true,'padding must not close')
+  if(selector==='.help-dialog')await pinnedClose(selector)
+  await pointerGesture(outside);await until(()=>cdp.evaluate(`!document.querySelector('${selector}').open`),'full backdrop click closes')
+ }
+ await click('编辑主机');await fill('主机名称','保留草稿');const {inside,outside}=await dialogPoints('.editor-dialog')
+ await pointerGesture(inside,outside);assert.equal(await cdp.evaluate(`document.querySelector('.confirm-dialog').open`),false)
+ await pointerGesture(outside);await until(()=>cdp.evaluate(`document.querySelector('.confirm-dialog').open`))
+ const confirm=await dialogPoints('.confirm-dialog');await pointerGesture(confirm.inside,confirm.outside)
+ assert.equal(await cdp.evaluate(`document.querySelector('.confirm-dialog').open`),true)
+ await pointerGesture(confirm.outside);assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog').open`),true)
+ assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog input').value`),'保留草稿')
+ await click('关闭编辑','.editor-dialog');await click('放弃修改','.confirm-dialog');await closed()
+})
 await check('row menus dismiss outside, switch exclusively, close on Escape and preserve actions',async()=>{
  const host='.host-menu',rule='.rule .row-menu'
  const open=selector=>until(()=>cdp.evaluate(`document.querySelector(${JSON.stringify(selector)}).open`),'row menu open')
@@ -124,6 +156,33 @@ await check('new host mappings never auto-enroll in existing plans',async()=>{co
 await check('search finds mapping ports and state filter is explicit',async()=>{await cdp.evaluate(`(()=>{const i=document.querySelector('input[aria-label="搜索主机或映射"]');i.value='15432';i.dispatchEvent(new Event('input',{bubbles:true}));})()`);await delay(50);assert.equal(await cdp.evaluate(`document.querySelectorAll('.registered').length`),1);await cdp.evaluate(`(()=>{const i=document.querySelector('input[aria-label="搜索主机或映射"]');i.value='';i.dispatchEvent(new Event('input',{bubbles:true}));const s=document.querySelector('select[aria-label="筛选映射状态"]');s.value='running';s.dispatchEvent(new Event('change',{bubbles:true}));})()`);await delay(50);assert.equal(await cdp.evaluate(`document.querySelectorAll('.registered').length`),0);await click('清除筛选')})
 await check('host deletion previews plan references and cascades registration only',async()=>{await hostAction('删除主机');await until(()=>cdp.evaluate(`document.querySelector('.confirm-dialog[open]')?.textContent.includes('日常开发')`));await click('删除登记，保留运行连接','.confirm-dialog');await until(async()=>(await api('status')).config.hosts.length===1);const s=await api('status');assert.equal(s.config.rules.length,1);assert.equal(s.config.plans[0].ruleIds.length,0)})
 await check('dark 480px long lists and bulk editor have no viewport overflow',async()=>{const s=await api('status');s.config.rules=Array.from({length:40},(_,i)=>({...s.config.rules[0],id:`long-${i}`,name:`服务 ${i} · 数据库与管理后台`,port:18000+i,notes:'长备注用于检查窄窗口的换行与操作可到达性。'}));s.config.plans=[];s.config.theme='dark';await api('save',{config:s.config,revision:s.revision});await delay(1400);await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});assert.equal(await cdp.evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);assert.equal(await cdp.evaluate(`document.documentElement.dataset.theme`),'dark');assert.equal(await cdp.evaluate(`document.querySelectorAll('.registered').length`),40);await screenshot('dark-narrow.png');await cdp.evaluate(`document.querySelector('.host-menu > summary').click()`);await delay(60);await screenshot('host-menu-dark-narrow.png');await cdp.evaluate(`document.querySelector('.host-menu')?.removeAttribute('open')`);await click('编辑主机');await click('端口映射','.editor-dialog',true);assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog').scrollWidth<=document.querySelector('.editor-dialog').clientWidth`),true);await screenshot('editor-dark-narrow.png');await click('取消','.editor-dialog');await closed();await click('使用说明');assert.equal(await cdp.evaluate(`document.querySelector('.help-dialog').scrollWidth<=document.querySelector('.help-dialog').clientWidth`),true);await screenshot('help-dark-narrow.png');await escape()})
+await check('mapping drag scrolls both edges, cancels cleanly and saves stable IDs',async()=>{
+ const before=await api('status'),ids=before.config.rules.map(r=>r.id)
+ await click('编辑主机');await click('端口映射','.editor-dialog',true);await pinnedClose('.editor-dialog')
+ // Dispatch drag events against real DOM geometry; the animation loop must keep
+ // scrolling even when the pointer stays still near either edge.
+ await cdp.evaluate(`(()=>{const d=document.querySelector('.editor-dialog');d.scrollTop=300;window.sortData=new DataTransfer();const h=d.querySelector('.sort-handle'),r=d.getBoundingClientRect();h.dispatchEvent(new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:window.sortData,clientX:r.left+50,clientY:r.top+140}));d.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:window.sortData,clientX:r.left+50,clientY:r.top+95}))})()`)
+ await until(()=>cdp.evaluate(`document.querySelector('.editor-dialog').scrollTop<200`),'upward edge scroll')
+ await cdp.evaluate(`(()=>{const d=document.querySelector('.editor-dialog'),r=d.getBoundingClientRect();d.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:window.sortData,clientX:r.left+50,clientY:r.bottom-50}))})()`)
+ await until(()=>cdp.evaluate(`document.querySelector('.editor-dialog').scrollTop>500`),'downward edge scroll')
+ await cdp.evaluate(`document.dispatchEvent(new DragEvent('dragend',{bubbles:true}))`)
+ const stopped=await cdp.evaluate(`document.querySelector('.editor-dialog').scrollTop`);await delay(150)
+ assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog').scrollTop`),stopped)
+ assert.equal(await cdp.evaluate(`!!document.querySelector('[data-sorting],[data-sort-drop]')`),false)
+ assert.equal(await cdp.evaluate(`document.querySelector('.confirm-dialog').open`),false)
+ assert.deepEqual((await api('status')).config.rules.map(r=>r.id),ids,'cancelled drag does not save')
+ await cdp.evaluate(`(()=>{const d=document.querySelector('.editor-dialog');d.scrollTop=0;const rows=d.querySelectorAll('.mapping-editor'),target=rows[2];target.scrollIntoView({block:'start'});const r=target.getBoundingClientRect();rows[0].querySelector('.sort-handle').dispatchEvent(new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:new DataTransfer(),clientX:r.left+30,clientY:r.top+30}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,clientX:r.left+30,clientY:r.top+20}))})()`)
+ const expected=[ids[1],ids[0],...ids.slice(2)]
+ assert.deepEqual(await cdp.evaluate(`[...document.querySelectorAll('.mapping-editor')].map(r=>r.dataset.ruleId)`),expected)
+ assert.deepEqual((await api('status')).config.rules.map(r=>r.id),ids,'draft order waits for save')
+ await click('保存','.editor-dialog');await closed();assert.deepEqual((await api('status')).config.rules.map(r=>r.id),expected)
+ const snapshot=await api('status')
+ await cdp.evaluate(`document.querySelector('.registered .sort-handle').focus()`)
+ await cdp.command('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowDown',code:'ArrowDown',windowsVirtualKeyCode:40,modifiers:1})
+ await until(async()=>(await api('status')).config.rules[0].id===ids[0],'keyboard sorting saves')
+ const sorted=await api('status');assert.deepEqual([...sorted.config.rules].sort((a,b)=>a.id.localeCompare(b.id)),[...snapshot.config.rules].sort((a,b)=>a.id.localeCompare(b.id)))
+ await cdp.command('Page.reload');await until(()=>cdp.evaluate(`document.querySelector('.registered')?.dataset.sortId===${JSON.stringify(ids[0])}`),'order persists after reload')
+})
 await check('collapsed hosts persist after refresh and focus remains keyboard accessible',async()=>{await cdp.evaluate(`document.querySelector('.host-title button').click()`);await cdp.evaluate('window.tetherReloadMarker=true');await cdp.command('Page.reload');await until(()=>cdp.evaluate(`!window.tetherReloadMarker&&document.querySelector('.host-title button')?.getAttribute('aria-expanded')==='false'`));await cdp.evaluate(`document.querySelector('nav button').focus()`);assert.equal(await cdp.evaluate(`document.activeElement.tagName`),'BUTTON')})
 await check('environment replacement discards delayed old responses',async()=>{
  await cdp.evaluate(`(()=>{const original=window.fetch.bind(window);let armed=true;window.fetch=async(url,options)=>{if(armed&&JSON.parse(options?.body||'{}').action==='status'){armed=false;const response=await original(url,options);const value=await response.json();value.value.config.hosts[0].name='旧环境延迟返回';await new Promise(r=>setTimeout(r,2200));return new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}})}return original(url,options)}})()`);
