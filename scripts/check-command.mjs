@@ -74,13 +74,18 @@ function launch(value){
 async function ready(process,port){await waitFor(()=>{if(process.exitCode!==null||process.signalCode!==null)throw Error(process.commandError||'exported command exited');return reachable(port)})}
 async function stop(process){if(process.exitCode===null&&process.signalCode===null){if(win)execFileSync('taskkill',['/PID',String(process.pid),'/T','/F']);else process.kill()}await waitFor(()=>process.exitCode!==null||process.signalCode!==null)}
 function forwards(value){return value.args.filter(arg=>['-L','-R','-D'].includes(arg))}
+function inspectCommand(value){
+ const command=value.command.replace('ssh -N -T ','ssh -G -N -T ')
+ assert.notEqual(command,value.command,'inspect the actual copied text without connecting')
+ return win?execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],{encoding:'utf8'}):execFileSync('sh',['-c',`exec ${command}`],{encoding:'utf8'})
+}
 let passed=0
 async function check(name,fn){await fn();passed++;console.log('PASS '+name)}
 try{
  assert.equal((await api('status')).configError,null)
  await check('unstarted rule exports exactly one forward and generation opens no SSH connection',async()=>{
   const before=connections,value=await api('connectionCommand',{ruleId:'local'})
-  assert.deepEqual(forwards(value),['-L']);assert.equal(value.shell,win?'PowerShell':'POSIX')
+  assert.deepEqual(forwards(value),['-L']);assert.equal(value.shell,win?'PowerShell':'POSIX');assert.ok(value.command.startsWith('ssh -N -T '));assert.ok(!value.command.includes('Start-Process'))
   assert.ok(!value.args.includes(cfg));assert.ok(!value.command.includes('runtime/'));assert.ok(!value.command.includes(ports[1]+':'))
   assert.equal(connections,before);assert.equal((await api('status')).groups.length,0)
   const process=launch(value)
@@ -100,7 +105,7 @@ try{
   }
  })
  await check('two-hop export preserves each identity and runs without original config files',async()=>{
-  const value=await api('connectionCommand',{ruleId:'jump'});assert.deepEqual(forwards(value),['-L']);assert.ok(value.args.some(arg=>arg.startsWith('proxycommand ')))
+  const value=await api('connectionCommand',{ruleId:'jump'});assert.deepEqual(forwards(value),['-L']);assert.ok(value.args.some(arg=>arg.startsWith('proxycommand=')))
   await rename(cfg,cfg+'.away');await rename(include,include+'.away')
   const process=launch(value)
   try{await ready(process,ports[5]);await echoTest(ports[5])}finally{await stop(process);await rename(cfg+'.away',cfg);await rename(include+'.away',include)}
@@ -136,7 +141,13 @@ try{
   state.config.hosts[0].options=[`IdentityFile="${sshPath(key)}"`,`IdentityFile="${sshPath(key)}-second"`]
   await api('save',{config:state.config,revision:state.revision})
   const value=await api('connectionCommand',{ruleId:'ipv6'});assert.ok(value.args.includes(`[::1]:${ports[7]}:[::1]:${echoPort}`))
-  const parsed=execFileSync(value.program,['-G',...value.args],{encoding:'utf8'});assert.equal(parsed.split('\n').filter(l=>l.startsWith('identityfile ')).length,2)
+  const parsed=inspectCommand(value);assert.equal(parsed.split('\n').filter(l=>l.startsWith('identityfile ')).length,2)
+ })
+ await check('deferred identity paths retain their config semantics in direct commands',async()=>{
+  const state=await api('status');state.config.hosts[0].options=['IdentityFile=~/.ssh/tether-missing-%h']
+  await api('save',{config:state.config,revision:state.revision})
+  const value=await api('connectionCommand',{ruleId:'ipv6'});assert.ok(value.command.startsWith('ssh -N -T '))
+  const parsed=inspectCommand(value);assert.ok(parsed.includes('identityfile ~/.ssh/tether-missing-%h'))
  })
  await check('jump-dependent path tokens fail explicitly without changing running resources',async()=>{
   const state=await api('status');state.config.hosts.find(h=>h.id==='jump-host').options=['IdentityFile=~/.ssh/key-%j']

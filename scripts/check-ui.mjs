@@ -89,7 +89,7 @@ await check('single mapping command follows rule ID and reports copy and generat
   await screenshot('mapping-command-light.png')
   await click('复制完整链接命令','.rule .row-menu')
   await until(()=>cdp.evaluate(`document.querySelector('.notice')?.textContent.includes('完整链接命令已复制')`),'command copy success')
-  const copied=await cdp.evaluate('window.commandCopied');assert.ok(copied.startsWith('Start-Process '));assert.equal((copied.match(/"-L"/g)||[]).length,1)
+  const copied=await cdp.evaluate('window.commandCopied');assert.ok(copied.startsWith('ssh -N -T '));assert.equal((copied.match(/\s-L\s/g)||[]).length,1)
   assert.equal(await cdp.evaluate(`document.querySelector('.rule .row-menu').open`),false)
   await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});await cdp.evaluate(`document.documentElement.dataset.theme='dark'`)
   await pointerClick('.rule .row-menu > summary');await screenshot('mapping-command-dark-narrow.png')

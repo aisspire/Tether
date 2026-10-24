@@ -66,7 +66,16 @@ fn windows(value: &str) -> String {
     quoted
 }
 fn powershell(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    if !value.is_empty()
+        && !value.starts_with('@')
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:./-\\".contains(&b))
+    {
+        value.into()
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
 }
 fn native_line(program: &str, args: &[String], win: bool) -> String {
     std::iter::once(program)
@@ -75,22 +84,38 @@ fn native_line(program: &str, args: &[String], win: bool) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-fn render(program: &str, args: &[String], win: bool) -> String {
+fn render(program: &str, args: &[String], win: bool) -> Result<String> {
     if win {
-        // Pass one native argument string, preserving embedded quotes on both
-        // Windows PowerShell 5.1 and PowerShell 7, without --% environment expansion.
-        let arguments = args
-            .iter()
-            .map(|s| windows(s))
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!(
-            "Start-Process -FilePath {} -ArgumentList {} -NoNewWindow -Wait",
-            powershell(program),
-            powershell(&arguments)
-        )
+        let executable = powershell(program);
+        let executable = if executable.starts_with('\'') {
+            format!("& {executable}")
+        } else {
+            executable
+        };
+        if args.iter().any(|s| s.contains('"')) {
+            // Nested SSH configuration quotes (not ordinary path spaces) need
+            // native argument passing on both PowerShell 5.1 and 7.
+            let arguments = args[2..]
+                .iter()
+                .map(|s| windows(s))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let percents: Vec<_> = arguments.match_indices('%').map(|(i, _)| i).collect();
+            if percents.len() > 2 || percents.len() == 2 && percents[1] != percents[0] + 1 {
+                return Err(
+                    "复杂引号参数含可能被 PowerShell 展开的 % 引用，无法无损生成直接 SSH 命令"
+                        .into(),
+                );
+            }
+            Ok(format!("{executable} -N -T --% {arguments}"))
+        } else {
+            Ok(std::iter::once(executable)
+                .chain(args.iter().map(|s| powershell(s)))
+                .collect::<Vec<_>>()
+                .join(" "))
+        }
     } else {
-        native_line(program, args, false)
+        Ok(native_line(program, args, false))
     }
 }
 
@@ -98,6 +123,13 @@ async fn inspect(program: &str, args: &[String], secs: u64) -> Result<Options> {
     let mut cmd = ssh::command(program);
     cmd.arg("-G").args(args);
     Ok(ssh::effective_map(&ssh::output(cmd, secs).await?))
+}
+
+fn append_options(args: &mut Vec<String>, options: &Options) {
+    for option in ssh::config_options(options) {
+        let (key, value) = option.split_once(' ').unwrap();
+        args.extend(["-o".into(), format!("{key}={value}")]);
+    }
 }
 
 async fn host_args(
@@ -178,7 +210,7 @@ async fn host_args(
         set(&mut expected, "proxycommand", proxy);
     }
 
-    let mut args = vec!["-F".into(), "none".into(), "-N".into(), "-T".into()];
+    let mut args = vec!["-N".into(), "-T".into(), "-F".into(), "none".into()];
     if let Some(endpoint) = relay {
         args.extend(["-W".into(), endpoint]);
     }
@@ -192,14 +224,38 @@ async fn host_args(
         snapshot.host.timeout_secs,
     )
     .await?;
-    let delta = expected
+    let mut delta: Options = expected
         .iter()
         .filter(|(k, v)| baseline.get(*k) != Some(*v))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    for option in ssh::config_options(&delta) {
-        args.extend(["-o".into(), option]);
+    // Native flags keep ordinary commands readable and avoid a second layer of
+    // SSH config quoting for identity paths containing spaces.
+    if let Some(values) = delta.remove("identityfile") {
+        for value in values {
+            // -i expands ~ early and skips missing files, unlike IdentityFile.
+            // Keep config syntax for deferred tokens and unavailable identities.
+            if !value.starts_with('~')
+                && !value.contains(['%', '$'])
+                && std::path::Path::new(&value).is_file()
+            {
+                args.extend(["-i".into(), value]);
+            } else {
+                append_options(
+                    &mut args,
+                    &Options::from([("identityfile".into(), vec![value])]),
+                );
+            }
+        }
     }
+    for (key, flag) in [("port", "-p"), ("user", "-l")] {
+        if let Some(values) = delta.remove(key) {
+            for value in values {
+                args.extend([flag.into(), value]);
+            }
+        }
+    }
+    append_options(&mut args, &delta);
     if let Some(rule) = rule {
         args.extend([
             match rule.direction {
@@ -259,7 +315,7 @@ pub async fn generate(
     )
     .await?;
     let program = snapshot.host.ssh.clone();
-    let command = render(&program, &args, cfg!(windows));
+    let command = render(&program, &args, cfg!(windows))?;
     if command.contains(['\n', '\r', '\0']) {
         return Err("连接参数包含换行或空字符，无法复制为单行命令".into());
     }
@@ -279,13 +335,33 @@ mod tests {
         assert_eq!(posix("a'b $(touch x)"), "'a'\"'\"'b $(touch x)'");
         assert_eq!(windows("a\\\"b\\"), "\"a\\\\\\\"b\\\\\"");
         assert_eq!(powershell("a'b $env:X"), "'a''b $env:X'");
-        let command = render(
-            "C:/Program Files/ssh.exe",
-            &["IdentityFile=C:/a\"b/".into()],
-            true,
+        let args = [
+            "-N",
+            "-T",
+            "-F",
+            "none",
+            "-i",
+            "C:/key space's-$value",
+            "-p",
+            "2222",
+            "host",
+        ]
+        .map(String::from);
+        let command = render("ssh", &args, true).unwrap();
+        assert_eq!(
+            command,
+            "ssh -N -T -F none -i 'C:/key space''s-$value' -p 2222 host"
         );
-        assert!(command.starts_with("Start-Process -FilePath 'C:/Program Files/ssh.exe'"));
-        assert!(command.ends_with(" -NoNewWindow -Wait"));
+        assert!(render("C:/Program Files/ssh.exe", &args, true)
+            .unwrap()
+            .starts_with("& 'C:/Program Files/ssh.exe' -N -T "));
+        let mut nested = args.to_vec();
+        nested.insert(2, "proxycommand=ssh -i \"C:/key space\" hop".into());
+        assert!(render("ssh", &nested, true)
+            .unwrap()
+            .starts_with("ssh -N -T --% "));
+        nested[2] = "proxycommand=ssh -i \"%USERPROFILE%/key\" hop".into();
+        assert!(render("ssh", &nested, true).is_err());
         assert!(uses_jump_token("key-%j-%h"));
         assert!(uses_jump_token("key-%C"));
         assert!(!uses_jump_token("key-%%j-%%C"));

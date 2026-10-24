@@ -75,11 +75,11 @@
 
 `connectionCommand` 通过现有环境会话路由，读取当前环境的已登记规则及其已保存主机；规则仍登记时不使用旧组参数或页面里的本次启动覆盖。未登记但仍有运行记录的临时项／SSH 配置来源项使用所属组的规则及快照，传入 `groupId` 可指定该组；已消失的引用返回错误。
 
-导出使用 `-F none`、仅一项 `-L`／`-R`／`-D` 与必要 `-o`。基于同一 OpenSSH 客户端的无配置默认值生成差异参数，再以 `ssh -G` 回读核对非转发参数，保留有序重复身份项、IPv6 和路径引号。内部就绪日志级别改为普通 `INFO`；保活和仅转发设置保留。Agent socket 已绑定且未显式指定其他 IdentityAgent 时写入对应参数，不导出问答口令、私钥内容或后台调用身份。
+导出默认以 `ssh -N -T` 开头，使用 `-F none`、仅一项 `-L`／`-R`／`-D` 与必要连接参数。基于同一 OpenSSH 客户端的无配置默认值生成差异参数，再以 `ssh -G` 回读核对非转发参数，保留有序重复身份项、IPv6 和路径引号。端口和用户使用 `-p`、`-l`，无延迟展开且文件存在的身份路径使用 `-i`；其他身份路径仍保留 `-o IdentityFile=...`，避免 `-i` 提前展开 `~` 或丢弃不存在的身份。其他选项使用 `-o key=value`。内部就绪日志级别改为普通 `INFO`；保活和仅转发设置保留。Agent socket 已绑定且未显式指定其他 IdentityAgent 时写入对应参数，不导出问答口令、私钥内容或后台调用身份。
 
 ProxyJump 按已有逐跳快照展开为嵌套 `ProxyCommand`，每跳保留自己的参数，以 `-W` 转递上层连接，并单独设置标准输入与清除转发；不依赖组的临时文件，不将目标身份覆盖套给跳板。由于改写会改变 `%j` 与 `%C` 的含义，跳板上下文内使用这些 token 的参数明确拒绝。原有配置快照的不支持边界仍适用；生成可能显式解析原始配置，因此仍可能执行用户原有 `Match exec`，不在状态轮询中运行。
 
-`shell` 为 `PowerShell` 或 `POSIX`。Windows 用 `Start-Process -NoNewWindow -Wait` 和单个原生命令行参数串保留 PowerShell 5.1／7 的引号；WSL／Linux 用 POSIX shell 引号，按所属环境执行，不额外包装 `wsl.exe`。命令中的密钥、Agent 和用户自定义 ProxyCommand 等仍依赖该环境现有资源，不承诺跨机器移植。无法回读一致、包含换行／空字符或超出 Windows 长度边界时不返回可复制命令。
+`shell` 为 `PowerShell` 或 `POSIX`。Windows 直接调用 SSH，可安全裸写的参数不加引号，其余用 PowerShell 字面量单引号；自定义程序路径需要引号时使用调用运算符 `&`。嵌套双引号参数使用 `ssh -N -T --% ...` 保留原生引号，不生成进程启动包装。`--%` 仍可能展开 `%名称%` 环境引用，因此复杂引号模式下存在非相邻或多组百分号时明确拒绝，避免改变路径或命令；语义依据见 [PowerShell 参数解析](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing?view=powershell-5.1)。WSL／Linux 用 POSIX shell 引号，按所属环境执行，不额外包装 `wsl.exe`。命令中的密钥、Agent 和用户自定义 ProxyCommand 等仍依赖该环境现有资源，不承诺跨机器移植。无法回读一致、包含换行／空字符或超出 Windows 长度边界时不返回可复制命令。
 
 前端在点击时即向 Clipboard API 提供待生成文本，避免等待 SSH 解析后丢失用户手势；支持时使用异步 `ClipboardItem`，否则回退 `writeText`。生成与权限失败均显示可关闭错误，不显示本次成功通知；处理期间禁止重复复制。
 
