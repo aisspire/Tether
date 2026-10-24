@@ -11,6 +11,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
     "test:runtime": "node scripts/check-runtime.mjs",
+    "test:command": "node scripts/check-command.mjs",
     "test:ui": "node scripts/check-ui.mjs",
     "test:interactions": "node scripts/check-interactions.mjs",
     "test:bundle": "node scripts/check-bundle.mjs",

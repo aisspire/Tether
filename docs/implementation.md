@@ -55,6 +55,7 @@
 | status / reload | 读取状态 / 显式重载本地配置；不启动连接 |
 | save | `config`、`revision`；成功后才更新内存 |
 | preview / test | `hostId` 或完整 `host` 草稿、可选 `overrides`；生效参数 / 目标 TCP 响应，不保存草稿 |
+| connectionCommand | `ruleId`、临时项可选 `groupId`；返回 `{program,args,command,shell}`，只生成当前映射的终端命令，不启动或复用连接 |
 | dismiss | `groupId`；只移除已结束且无进程、无重连意图的失败记录，拒绝活动连接 |
 | ensure | `request: {ruleIds?, temporary?, overrides?, planId?, consumer?}` |
 | stop | `scope: group/host/all`，前两者需 `id` |
@@ -69,6 +70,18 @@
 | knownHosts.find / knownHosts.remove | 已登记文件 `path`、`host`；删除须 `confirm: true` |
 
 `ensure` 返回 `{instance, ready, results}`；每项含 `ruleId`、可选 `groupId`、`state`、`reused` 和 `error`。只有本次所有规则都确认 `running` 时 `ready: true`。`failed`、`pending`、`conflict`、`stopped`、`timeout`、`unverified` 均不满足前置依赖。资源等待不检测远端业务 HTTP 健康。
+
+## 单条映射完整链接命令（2026-10-24）
+
+`connectionCommand` 通过现有环境会话路由，读取当前环境的已登记规则及其已保存主机；规则仍登记时不使用旧组参数或页面里的本次启动覆盖。未登记但仍有运行记录的临时项／SSH 配置来源项使用所属组的规则及快照，传入 `groupId` 可指定该组；已消失的引用返回错误。
+
+导出使用 `-F none`、仅一项 `-L`／`-R`／`-D` 与必要 `-o`。基于同一 OpenSSH 客户端的无配置默认值生成差异参数，再以 `ssh -G` 回读核对非转发参数，保留有序重复身份项、IPv6 和路径引号。内部就绪日志级别改为普通 `INFO`；保活和仅转发设置保留。Agent socket 已绑定且未显式指定其他 IdentityAgent 时写入对应参数，不导出问答口令、私钥内容或后台调用身份。
+
+ProxyJump 按已有逐跳快照展开为嵌套 `ProxyCommand`，每跳保留自己的参数，以 `-W` 转递上层连接，并单独设置标准输入与清除转发；不依赖组的临时文件，不将目标身份覆盖套给跳板。由于改写会改变 `%j` 与 `%C` 的含义，跳板上下文内使用这些 token 的参数明确拒绝。原有配置快照的不支持边界仍适用；生成可能显式解析原始配置，因此仍可能执行用户原有 `Match exec`，不在状态轮询中运行。
+
+`shell` 为 `PowerShell` 或 `POSIX`。Windows 用 `Start-Process -NoNewWindow -Wait` 和单个原生命令行参数串保留 PowerShell 5.1／7 的引号；WSL／Linux 用 POSIX shell 引号，按所属环境执行，不额外包装 `wsl.exe`。命令中的密钥、Agent 和用户自定义 ProxyCommand 等仍依赖该环境现有资源，不承诺跨机器移植。无法回读一致、包含换行／空字符或超出 Windows 长度边界时不返回可复制命令。
+
+前端在点击时即向 Clipboard API 提供待生成文本，避免等待 SSH 解析后丢失用户手势；支持时使用异步 `ClipboardItem`，否则回退 `writeText`。生成与权限失败均显示可关闭错误，不显示本次成功通知；处理期间禁止重复复制。
 
 ## Oriel stdio-v1
 

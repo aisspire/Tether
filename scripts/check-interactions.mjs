@@ -13,6 +13,37 @@ async function sourceModule(file){
 }
 const {vDialogDismiss}=await sourceModule('../ui/dialogDismiss.ts')
 const {moveItem,useSortable}=await sourceModule('../ui/useSortable.ts')
+const {copyGeneratedText}=await sourceModule('../ui/clipboard.ts')
+
+async function clipboardFixture(clipboard,Item,fn){
+ const descriptors=new Map(['navigator','ClipboardItem'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]))
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard}})
+ Object.defineProperty(globalThis,'ClipboardItem',{configurable:true,value:Item})
+ try{await fn()}finally{for(const [key,descriptor] of descriptors)if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]}
+}
+test('command copy reserves clipboard access before asynchronous generation finishes',async()=>{
+ let release,wrote=false,content
+ class Item{constructor(data){this.data=data}}
+ await clipboardFixture({write:async items=>{wrote=true;content=await(await items[0].data['text/plain']).text()}},Item,async()=>{
+  const operation=copyGeneratedText(()=>new Promise(resolve=>release=resolve))
+  assert.equal(wrote,true,'write starts during the original click')
+  release('ssh -N -L single-forward host');await operation
+  assert.equal(content,'ssh -N -L single-forward host')
+ })
+})
+test('command generation and clipboard denial remain distinguishable and never report success',async()=>{
+ class Item{constructor(data){this.data=data}}
+ await clipboardFixture({write:async items=>{await items[0].data['text/plain']}},Item,async()=>{
+  await assert.rejects(copyGeneratedText(async()=>{throw Error('SSH 参数无法导出')}),/SSH 参数无法导出/)
+ })
+ await clipboardFixture({write:async()=>{throw Error('剪贴板权限被拒绝')}},Item,async()=>{
+  await assert.rejects(copyGeneratedText(async()=>'ssh command'),/剪贴板权限被拒绝/)
+  await assert.rejects(copyGeneratedText(async()=>{throw Error('命令生成也失败')}),/命令生成也失败/)
+ })
+ await clipboardFixture({writeText:async text=>assert.equal(text,'fallback command')},undefined,async()=>{
+  await copyGeneratedText(async()=>'fallback command')
+ })
+})
 
 function fixture(){
  const dialog=new EventTarget();let dismissed=0

@@ -257,6 +257,62 @@ impl Runtime {
                         .unwrap(),
                 )
             }
+            "connectionCommand" => {
+                let rule_id = value["ruleId"].as_str().ok_or("缺少规则 ID")?;
+                let registered = {
+                    let store = self.store.lock().unwrap();
+                    store
+                        .config
+                        .rules
+                        .iter()
+                        .find(|r| r.id == rule_id)
+                        .map(|rule| {
+                            let host = store
+                                .config
+                                .hosts
+                                .iter()
+                                .find(|h| h.id == rule.host_id)
+                                .cloned()
+                                .ok_or("映射对应的主机不存在")?;
+                            Ok::<_, String>((rule.clone(), host))
+                        })
+                        .transpose()?
+                };
+                let (rule, snapshot) = if let Some((rule, host)) = registered {
+                    (
+                        rule,
+                        ssh::compile(&host, &self.run_dir.join("runtime")).await?,
+                    )
+                } else {
+                    let groups = self.groups.lock().unwrap();
+                    let group = groups
+                        .values()
+                        .find(|g| {
+                            value["groupId"].as_str().is_none_or(|id| g.view.id == id)
+                                && g.view.rules.iter().any(|r| r.id == rule_id)
+                        })
+                        .ok_or("映射已不存在，请刷新后重试")?;
+                    let rule = group
+                        .view
+                        .rules
+                        .iter()
+                        .find(|r| r.id == rule_id)
+                        .unwrap()
+                        .clone();
+                    (rule, group.view.snapshot.clone())
+                };
+                let socket = self
+                    .agent_socket
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .or_else(|| self.store.lock().unwrap().config.agent_socket.clone());
+                serde_json::to_value(
+                    crate::connection_command::generate(&snapshot, &rule, socket.as_deref())
+                        .await?,
+                )
+                .map_err(|e| e.to_string())
+            }
             "test" => {
                 let _gate = self.test_gate.lock().await;
                 let h = self.host(&value)?;

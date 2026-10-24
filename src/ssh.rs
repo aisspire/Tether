@@ -88,7 +88,7 @@ pub fn effective_map(text: &str) -> BTreeMap<String, Vec<String>> {
     }
     map
 }
-fn nonforward(m: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String>> {
+pub fn nonforward(m: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String>> {
     m.iter()
         .filter(|(k, _)| {
             !["localforward", "remoteforward", "dynamicforward", "host"].contains(&k.as_str())
@@ -131,6 +131,14 @@ fn get(m: &BTreeMap<String, Vec<String>>, key: &str) -> String {
 }
 fn stanza(alias: &str, m: &BTreeMap<String, Vec<String>>) -> String {
     let mut s = format!("Host {alias}\n");
+    for option in config_options(m) {
+        s.push_str(&format!("  {option}\n"));
+    }
+    s
+}
+// Both runtime files and exported -o arguments use SSH configuration quoting.
+pub fn config_options(m: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let mut options = Vec::new();
     for (k, vs) in nonforward(m) {
         for v in vs {
             let v = if [
@@ -149,10 +157,10 @@ fn stanza(alias: &str, m: &BTreeMap<String, Vec<String>>) -> String {
             } else {
                 v
             };
-            s.push_str(&format!("  {k} {v}\n"));
+            options.push(format!("{k} {v}"));
         }
     }
-    s
+    options
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,6 +170,8 @@ pub struct Snapshot {
     pub inherited_forwards: Vec<String>,
     pub config_text: String,
     pub fingerprint: String,
+    #[serde(skip)]
+    pub sections: Vec<(String, BTreeMap<String, Vec<String>>)>,
 }
 pub async fn compile(h: &Host, root: &Path) -> Result<Snapshot> {
     let main = resolve(h).await?;
@@ -267,6 +277,7 @@ pub async fn compile(h: &Host, root: &Path) -> Result<Snapshot> {
         inherited_forwards,
         config_text,
         fingerprint,
+        sections,
     })
 }
 pub fn launch_args(snapshot: &Snapshot, file: &Path, rules: &[Rule]) -> Vec<String> {

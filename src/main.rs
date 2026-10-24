@@ -1,5 +1,6 @@
 mod agent;
 mod bridge;
+mod connection_command;
 mod detection;
 mod environments;
 mod external;
