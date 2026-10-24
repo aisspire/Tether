@@ -4,6 +4,13 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 启动只补缺少的转发，同批兼容项共用 SSH；停止按连接组、主机或全部托管连接处理。匹配端口或规则不会获得外部进程的管理权。
 
+源码仓库：[aisspire/Tether](https://github.com/aisspire/Tether)。当前版本为 0.1.0 开发预览，Windows 为主要使用平台；构建产物需在目标平台验证后单独发布，已有本机产物不代表 GitHub 已提供下载。
+
+```bash
+git clone https://github.com/aisspire/Tether.git
+cd Tether
+```
+
 ## 构建与独立运行
 
 需要已有 Windows Rust 1.85+（MSVC 工具链）、Node 22.12+、npm 10，以及系统 OpenSSH 的 `ssh`、`ssh-keygen`、`ssh-add`。缺少工具时自行准备；构建与启动脚本不安装系统组件或启用 Agent 服务。
@@ -18,7 +25,7 @@ Windows 原生 OpenSSH 转发管理工具，使用 Vue 3 / TypeScript 页面和 
 
 `build.cmd` 调用同目录的 `build.ps1` 并透传参数，CMD 与 PowerShell 均可使用；例如 `build.cmd -DebugBuild`。从 Oriel 父仓库可执行 `plugins\external\tether\build.cmd`，脚本会自动定位 Tether 目录。父仓库根目录的 `build.cmd` 只打包 Oriel，不会打包或安装 Tether。
 
-构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`tether-linux-x64`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
+构建按 `package-lock.json` 执行局部 `npm ci`，按 `Cargo.lock` 构建 Release，输出 `target/bundle/`：`tether.exe`、`tether-linux-x64`、`dist/`、`plugin.json`、`oriel.ps1`、`USER_GUIDE.md`、`LICENSE`。重新打包替换旧界面资源，避免残留旧文件。可将整个目录放在其他位置。`-DebugBuild` 可生成调试包。不创建安装程序，也不发布。
 
 Windows 打包脚本会调用默认 WSL 发行版构建 Linux x64 静态后台，需要该环境已有 Rust、`x86_64-unknown-linux-musl` 目标及对应链接器。WSL 构建先查找 PATH 中的 Cargo，再查找 `CARGO_HOME/bin` 和 `~/.cargo/bin`，仅调整构建进程的 PATH，不修改 shell 配置或安装工具。可用 `-WslDistribution Ubuntu` 指定已有发行版；已有 Linux x64 静态产物时，可用 `-LinuxBinary 路径` 跳过 WSL 编译。失败时以汇总提示之前的 Cargo 输出定位具体原因。
 
@@ -74,3 +81,7 @@ npm run test:interactions
 原生检查使用临时密钥、受控回环 SSH2 服务、隔离目录与测试浏览器配置，不连接真实远端。运行检查前设置 `CARGO_TARGET_DIR=target/windows` 并构建 Windows Debug 程序。测试仅对自己新建的目录设置 ACL。Linux 可运行后台辅助验证，但不作为产品平台承诺。
 
 本轮具体结果、尚未支持的配置语义和未完成能力见[验证与缺口记录](verification.md)。没有硬件身份、多因素、系统 Agent 服务及所有客户端版本的完整验收；不把单元测试或网页截图当成这些能力已通过。
+
+## 许可证与发布
+
+Tether 源码采用 [MIT 许可证](LICENSE)。第三方依赖保留各自许可证，系统 OpenSSH 由用户已有环境提供。源码公开、版本标签和二进制 Release 分别执行，维护流程见[发布说明](docs/releasing.md)。

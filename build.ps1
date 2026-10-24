@@ -36,7 +36,7 @@ try {
     $bundle = Join-Path $PSScriptRoot 'target/bundle'
     New-Item -ItemType Directory -Force $bundle | Out-Null
     Copy-Item $LinuxBinary (Join-Path $bundle 'tether-linux-x64') -Force
-    Copy-Item "target/windows/$profile/tether.exe",'plugin.json','oriel.ps1','USER_GUIDE.md' $bundle -Force
+    Copy-Item "target/windows/$profile/tether.exe",'plugin.json','oriel.ps1','USER_GUIDE.md','LICENSE' $bundle -Force
     if (Test-Path (Join-Path $bundle 'dist')) { Remove-Item (Join-Path $bundle 'dist') -Recurse -Force }
     Copy-Item 'dist' $bundle -Recurse -Force
     Write-Host "Standalone bundle: $bundle"

@@ -1,5 +1,12 @@
 # 实际验证与剩余工作
 
+## 2026-10-24：公开源码与 MIT 发布准备
+
+- 检查 Oriel 与 Tether 当前 Git 文件、主分支及全部本地引用可达历史，覆盖 Oriel 19 个主线提交、含 stash 的 22 个可达提交和 Tether 14 个提交。自定义规则检查私钥、常见令牌、凭据 URL、固定密码、网络地址、本机路径与敏感文件名，并复核命中；未发现真实认证材料或私人运行配置。测试私钥标记、伪内容和非法 URL 用例保留；该检查不等于专用扫描器或完整安全审计。
+- 按用户选择增加 MIT 许可证与 Cargo 许可证、仓库元数据，补齐公开仓库入口和发布说明，打包脚本加入随包 LICENSE。加强调用身份文件、凭据目录与私钥相关忽略规则。已配置用户指定的公开空远端；未提交、推送、创建标签或发布附件。
+- 本轮 Linux `cargo test --locked --offline` 21 项、Vue / TypeScript 类型检查和 `npm run test:interactions` 6 项通过；Cargo 元数据检查、本地文档链接、忽略规则及 `git diff --check` 通过。未修改依赖版本或锁文件。
+- `npm run build` 在 Vite 阶段因缺少 `@rolldown/binding-linux-x64-gnu` 失败；已有 Windows PowerShell 启动报 `UtilBindVsockAnyPort: socket failed 1`。未安装工具或重建 Windows Release 包，打包脚本的新增 LICENSE 复制尚未经过完整 Windows 构建验收。现有 Release 包早于最近的复制命令修改，不能作为当前源码的已验收发布包；二进制发布前仍需重新构建、验收并整理第三方许可证。
+
 ## 2026-10-24：复制结果改为直接 SSH 命令
 
 - 按用户要求移除进程启动包装，默认复制 `ssh -N -T ...`；端口与用户使用 `-p`、`-l`，适用的身份路径使用 `-i`，其他选项使用 `-o key=value`。单条映射范围、生效参数回读及运行资源归属不变。

@@ -120,6 +120,8 @@ Oriel 管理插件的启动、就绪检查、状态和退出请求，Tether 管�
 
 ## 8. 架构与交付方向
 
+源码采用 [MIT 许可证](../../LICENSE)，独立仓库为 [aisspire/Tether](https://github.com/aisspire/Tether)。当前按 0.1.0 开发预览准备源码公开；源码推送、版本标签与二进制 Release 分别执行，不将已有本机构建视为已发布产物，流程见[发布说明](../releasing.md)。
+
 采用 Vue 3／TypeScript 界面、Rust 本地后台和系统 OpenSSH。独立运行可通过本地后台提供同一套页面，在浏览器打开；Oriel 展示同一个页面，不要求额外开发第二套业务 UI。
 
 `tether.exe serve` 当前提供本地页面地址，尚无独立桌面窗口。用户明确独立桌面应用并非必要，当前重点为 Oriel 内的工具应用布局，不为移除地址栏增加桌面外壳。保留现有独立浏览器使用方式，以及 Vue、Rust 后台、系统 OpenSSH 的分工。

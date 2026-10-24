@@ -11,6 +11,9 @@ node_modules/
 /runtime/
 /data/
 /.ssh/
+/.aws/
+/.codex/
+instance.json
 .env
 .env.*
 !.env.example
@@ -19,6 +22,8 @@ node_modules/
 *.pem
 *.ppk
 *.key
+*.pfx
+*.p12
 **/id_rsa
 **/id_ecdsa
 **/id_ed25519
