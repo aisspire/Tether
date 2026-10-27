@@ -12,6 +12,7 @@ mod runtime;
 mod server;
 mod ssh;
 mod store;
+mod terminal;
 mod tools;
 use model::*;
 use serde_json::{json, Value};
@@ -31,6 +32,9 @@ async fn main() {
     }
 }
 async fn run(args: Vec<String>) -> Result<()> {
+    if args.first().is_some_and(|s| s == "terminal-run") {
+        std::process::exit(terminal::run()?);
+    }
     if let Ok(origin) = std::env::var("TETHER_ASKPASS_URL") {
         let token = std::env::var("TETHER_ASKPASS_TOKEN").map_err(|_| "缺少认证身份")?;
         let response=server::call(&origin,"/prompt",&token,json!({"groupId":std::env::var("TETHER_ASKPASS_GROUP").unwrap_or_default(),"text":args.join(" ")})).await?;

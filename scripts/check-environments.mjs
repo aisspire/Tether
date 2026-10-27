@@ -11,7 +11,7 @@ const root=await mkdtemp(win?path.resolve('target/check-environments-'):path.joi
 const env={...process.env,...(!win?{XDG_RUNTIME_DIR:path.join(root,'system-runtime')}:{})}
 const proc=spawn(exe,['serve','--data-dir',root,'--oriel-stdio'],{env,stdio:['pipe','pipe','inherit']})
 const lines=readline.createInterface({input:proc.stdout})[Symbol.asyncIterator]();const first=await lines.next();assert.equal(first.done,false);const descriptor=JSON.parse(first.value)
-let passed=0,fixture,fixtureLines,blocker,remoteId;let fixtureSequence=0
+let passed=0,fixture,fixtureLines,blocker,remoteId;let fixtureSequence=0;const terminalPids=[]
 const fixtureProbe=async()=>{fixture.stdin.write(JSON.stringify({id:++fixtureSequence})+"\n");return JSON.parse((await fixtureLines.next()).value)}
 async function api(action,args={}){const r=await fetch(descriptor.origin+'/api',{method:'POST',headers:{Authorization:`Bearer ${descriptor.token}`,'Content-Type':'application/json'},body:JSON.stringify({action,...args})});const data=await r.json();if(!data.ok)throw Error(data.error);return data.value}
 async function check(name,fn){await fn();console.log('PASS '+name);passed++}
@@ -52,12 +52,20 @@ try{
    await check('WSL Agent binds an isolated socket and never stops its external service',async()=>{const bound=await api('agent.bind',{environment:id,path:f.socket});assert.equal(bound.socket,f.socket);await api('agent.add',{environment:id,path:f.key});assert.ok((await api('keys.list',{environment:id})).agent.includes('ssh-ed25519'));await api('agent.remove',{environment:id,path:f.key})})
    await check('Windows occupancy and WSL SSH use actual endpoints even with a same-number mapping',async()=>{const local=await api('status');local.config.hosts=[{...remote.config.hosts[0],destination:'127.0.0.1',configFile:'none',options:[`Port=${port}`]}];local.config.rules=[rule('windows-occupied',port)];await api('save',{config:local.config,revision:local.revision});const w=await api('test',{hostId:'fixture'}),l=await api('test',{environment:id,hostId:'fixture'});assert.equal(w.portChecks[0].state,'unavailable');assert.ok(w.portChecks[0].source==='Windows');assert.equal(l.portChecks.find(c=>c.ruleId==='external').state,'running',JSON.stringify(l.portChecks));assert.equal(l.portChecks.find(c=>c.ruleId==='external').pid,f.externalPid);assert.notEqual(l.portChecks.find(c=>c.ruleId==='same-number').state,'running')})
    await check('switch retains managed WSL forwarding and process identity',async()=>{assert.equal((await api('ensure',{environment:id,request:{ruleIds:['managed']}})).ready,true);const group=(await api('status',{environment:id})).groups[0];await api('environments.select');assert.equal((await api('status',{environment:id})).groups[0].pid,group.pid);assert.equal((await fixtureProbe()).managed,true)})
+   await check('external terminal follows WSL distribution/user and starts only the selected native batch',async()=>{
+    const state=await api('status',{environment:id});state.config.rules.push(rule('terminal-a',f.terminalPorts[0]),rule('terminal-b',f.terminalPorts[1]));await api('save',{environment:id,config:state.config,revision:state.revision})
+    const command=await api('hostCommand',{environment:id,hostId:'fixture',ruleIds:['terminal-a','terminal-b']});assert.equal(command.shell,'POSIX');assert.equal(command.args.filter(a=>a==='-L').length,2);assert.ok(command.command.includes(f.key))
+    const terminal=await api('hostTerminal',{environment:id,hostId:'fixture',ruleIds:['terminal-a','terminal-b']});terminalPids.push(terminal.terminalPid);assert.equal(terminal.environment,id)
+    let ready=false;for(let i=0;i<80;i++){if((await fixtureProbe()).terminal.every(Boolean)){ready=true;break}await new Promise(r=>setTimeout(r,100))}assert.equal(ready,true,'selected WSL forwards transmit data through the Linux SSH client')
+    assert.ok((await api('status',{environment:id})).groups.every(g=>g.rules.every(r=>!r.id.startsWith('terminal-'))))
+    await assert.rejects(api('hostTerminal',{environment:id,hostId:'fixture',ruleIds:['terminal-a']}),/占用/)
+   })
   }
   await check('concurrent WSL status and independent actions use correlated replies',async()=>{const results=await Promise.all(Array.from({length:20},(_,i)=>api(i%2?'status':'keys.list',{environment:id})));assert.ok(results.every((r,i)=>i%2?r.environment===id:Array.isArray(r.files)))})
  }else{
   await check('missing WSL cancels selection without changing local state',async()=>{await assert.rejects(api('environments.select',{distro:'missing'}));assert.equal((await api('status')).environment,win?'windows':'linux')})
  }
  await api('shutdown');await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('shutdown timeout')),15000);proc.once('exit',()=>{clearTimeout(timer);resolve()});if(proc.exitCode!==null){clearTimeout(timer);resolve()}})
- if(fixture)await check('complete exit cleans managed WSL forwarding and preserves external SSH',async()=>{const result=await fixtureProbe();assert.equal(result.managed,false);assert.equal(result.external,true)})
+ if(fixture)await check('complete exit cleans managed WSL forwarding and preserves external SSH',async()=>{const result=await fixtureProbe();assert.equal(result.managed,false);assert.equal(result.external,true);if(terminalPids.length)assert.deepEqual(result.terminal,[true,true])})
  console.log(JSON.stringify({passed,root,platform:process.platform},null,2))
-}finally{fixture?.stdin.end();blocker?.close();proc.stdin.end();if(proc.exitCode===null)proc.kill()}
+}finally{fixture?.stdin.end();blocker?.close();proc.stdin.end();if(proc.exitCode===null)proc.kill();if(fixture){for(let i=0;i<100&&fixture.exitCode===null&&fixture.signalCode===null;i++)await new Promise(r=>setTimeout(r,100))}for(const pid of terminalPids){try{execFileSync('taskkill.exe',['/PID',String(pid),'/T','/F'],{stdio:'ignore'})}catch{}}}

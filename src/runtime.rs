@@ -65,6 +65,7 @@ pub struct Ensure {
     #[serde(default)]
     pub consumer: String,
     pub plan_id: Option<String>,
+    pub include_inherited: Option<bool>,
 }
 pub struct Runtime {
     pub root: PathBuf,
@@ -313,6 +314,7 @@ impl Runtime {
                 )
                 .map_err(|e| e.to_string())
             }
+            "hostCommand" => self.host_command(value).await,
             "test" => {
                 let _gate = self.test_gate.lock().await;
                 let h = self.host(&value)?;
@@ -429,6 +431,99 @@ impl Runtime {
         }
         Ok(h)
     }
+    async fn host_command(self: &Arc<Self>, value: Value) -> Result<Value> {
+        let host_id = value["hostId"].as_str().ok_or("缺少主机 ID")?;
+        let ids: Vec<String> =
+            serde_json::from_value(value.get("ruleIds").cloned().unwrap_or(json!([])))
+                .map_err(|_| "映射选择无效")?;
+        let overrides: Vec<String> =
+            serde_json::from_value(value.get("overrides").cloned().unwrap_or(json!([])))
+                .map_err(|_| "启动参数覆盖无效")?;
+        ssh::validate_options(&overrides)?;
+        let (mut host, rules) = {
+            let store = self.store.lock().unwrap();
+            if let Some(error) = &store.error {
+                return Err(format!("配置无法读取：{error}"));
+            }
+            let host = store
+                .config
+                .hosts
+                .iter()
+                .find(|h| h.id == host_id)
+                .cloned()
+                .ok_or("主机不存在，请刷新后重试")?;
+            if ids.iter().any(|id| {
+                !store
+                    .config
+                    .rules
+                    .iter()
+                    .any(|r| &r.id == id && r.host_id == host_id)
+            }) {
+                return Err("所选映射已不存在或不属于当前主机，请重新选择".into());
+            }
+            let rules: Vec<_> = store
+                .config
+                .rules
+                .iter()
+                .filter(|r| r.host_id == host_id && (ids.is_empty() || ids.contains(&r.id)))
+                .cloned()
+                .collect();
+            (host, rules)
+        };
+        if rules.is_empty() {
+            return Err("此主机没有可启动的映射".into());
+        }
+        for (index, rule) in rules.iter().enumerate() {
+            if rules[..index].iter().any(|other| conflict(other, rule)) {
+                return Err("所选映射包含重复监听端点，请调整选择".into());
+            }
+        }
+        let mut options = overrides;
+        options.extend(host.options);
+        host.options = options;
+        let snapshot = ssh::compile(&host, &self.run_dir.join("runtime")).await?;
+        let socket = self
+            .agent_socket
+            .lock()
+            .unwrap()
+            .clone()
+            .or_else(|| self.store.lock().unwrap().config.agent_socket.clone());
+        let command =
+            crate::connection_command::generate_many(&snapshot, &rules, socket.as_deref()).await?;
+        if value["checkAvailable"] == true {
+            let _gate = self.gate.lock().await;
+            if *self.shutdown.borrow() {
+                return Err("后台正在退出，已取消启动".into());
+            }
+            {
+                let groups = self.groups.lock().unwrap();
+                if rules.iter().any(|rule| {
+                    groups.values().any(|g| {
+                        g.view.desired
+                            && g.view
+                                .rules
+                                .iter()
+                                .any(|r| r.id == rule.id || conflict(r, rule))
+                    })
+                }) {
+                    return Err(
+                        "所选映射已有托管连接或监听冲突，请取消勾选运行项后再在外部终端启动".into(),
+                    );
+                }
+            }
+            crate::external::refresh(self, true).await;
+            let external = self.external.lock().unwrap().0.clone();
+            for rule in &rules {
+                if external.iter().any(|m| m.rule_id == rule.id) {
+                    return Err(format!("映射“{}”已有外部连接，请先在终端处理", rule.name));
+                }
+                if rule.direction != Direction::Remote && crate::detection::occupied(rule).await? {
+                    return Err(format!("映射“{}”的监听端点已被占用，请调整选择", rule.name));
+                }
+            }
+        }
+        serde_json::to_value(command).map_err(|e| e.to_string())
+    }
     pub async fn ensure(self: &Arc<Self>, mut request: Ensure) -> Result<Value> {
         let epoch = self.epoch.load(Ordering::SeqCst);
         let guard = self.gate.lock().await;
@@ -488,7 +583,10 @@ impl Runtime {
             snapshots.insert(hid, result);
         }
         // Source config forwards join the intent list; they never silently rebind an old port.
-        for (hid, snapshot) in &snapshots {
+        for (hid, snapshot) in snapshots
+            .iter()
+            .filter(|_| request.include_inherited.unwrap_or(true))
+        {
             if let Ok(s) = snapshot {
                 match inherited_rules(hid, &s.inherited_forwards) {
                     Ok(rs) => {

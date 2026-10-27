@@ -1,20 +1,20 @@
-//! Single-forward, file-independent commands. Generation runs only ssh -G, never connects.
+//! File-independent forwarding commands. Generation runs only ssh -G, never connects.
 use crate::{
     model::*,
     ssh::{self, Snapshot},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 type Options = BTreeMap<String, Vec<String>>;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionCommand {
-    program: String,
-    args: Vec<String>,
+    pub program: String,
+    pub args: Vec<String>,
     pub command: String,
-    shell: &'static str,
+    shell: String,
 }
 
 fn first<'a>(options: &'a Options, key: &str) -> &'a str {
@@ -136,9 +136,8 @@ async fn host_args(
     snapshot: &Snapshot,
     destination: &str,
     source: &Options,
-    rule: Option<&Rule>,
-    relay: Option<String>,
-    preceding_jumps: Option<String>,
+    rules: &[Rule],
+    relay: Option<(String, Option<String>)>,
     socket: Option<&str>,
     depth: usize,
 ) -> Result<Vec<String>> {
@@ -160,9 +159,9 @@ async fn host_args(
             set(&mut expected, "identityagent", socket);
         }
     }
-    if let Some(jumps) = preceding_jumps {
+    if let Some((_, Some(jumps))) = &relay {
         expected.remove("proxycommand");
-        set(&mut expected, "proxyjump", jumps);
+        set(&mut expected, "proxyjump", jumps.clone());
     }
     let jumps = first(&expected, "proxyjump").to_owned();
     if !jumps.is_empty() && jumps != "none" {
@@ -197,9 +196,8 @@ async fn host_args(
             snapshot,
             jump_destination,
             &jump.1,
-            None,
-            Some(endpoint),
-            prefix,
+            &[],
+            Some((endpoint, prefix)),
             socket,
             depth + 1,
         ))
@@ -211,7 +209,7 @@ async fn host_args(
     }
 
     let mut args = vec!["-N".into(), "-T".into(), "-F".into(), "none".into()];
-    if let Some(endpoint) = relay {
+    if let Some((endpoint, _)) = relay {
         args.extend(["-W".into(), endpoint]);
     }
     // Compare against the same client's defaults so common commands stay short.
@@ -256,7 +254,7 @@ async fn host_args(
         }
     }
     append_options(&mut args, &delta);
-    if let Some(rule) = rule {
+    for rule in rules {
         args.extend([
             match rule.direction {
                 Direction::Local => "-L",
@@ -302,13 +300,28 @@ pub async fn generate(
     rule: &Rule,
     socket: Option<&str>,
 ) -> Result<ConnectionCommand> {
-    rule.validate()?;
+    generate_many(snapshot, std::slice::from_ref(rule), socket).await
+}
+
+pub async fn generate_many(
+    snapshot: &Snapshot,
+    rules: &[Rule],
+    socket: Option<&str>,
+) -> Result<ConnectionCommand> {
+    if rules.is_empty() {
+        return Err("请至少选择一条映射".into());
+    }
+    for rule in rules {
+        rule.validate()?;
+        if rule.host_id != snapshot.host.id {
+            return Err("映射不属于当前主机".into());
+        }
+    }
     let args = host_args(
         snapshot,
         &snapshot.host.destination,
         &snapshot.effective,
-        Some(rule),
-        None,
+        rules,
         None,
         socket,
         0,
@@ -323,7 +336,7 @@ pub async fn generate(
         program,
         args,
         command,
-        shell: if cfg!(windows) { "PowerShell" } else { "POSIX" },
+        shell: if cfg!(windows) { "PowerShell" } else { "POSIX" }.into(),
     })
 }
 

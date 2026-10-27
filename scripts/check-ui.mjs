@@ -77,7 +77,7 @@ await check('dialog backdrop requires both ends outside and padding stays inside
  assert.equal(await cdp.evaluate(`document.querySelector('.editor-dialog input').value`),'保留草稿')
  await click('关闭编辑','.editor-dialog');await click('放弃修改','.confirm-dialog');await closed()
 })
-await check('single mapping command follows rule ID and reports copy and generation errors',async()=>{
+await check('host command replaces per-mapping command and reports copy and generation errors',async()=>{
  await cdp.evaluate(`(()=>{
   window.commandClipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');window.commandOriginalFetch=window.fetch;window.commandCopied='';
   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{write:async items=>{window.commandCopied=await(await items[0].getType('text/plain')).text()},writeText:async text=>{window.commandCopied=text}}});
@@ -85,27 +85,73 @@ await check('single mapping command follows rule ID and reports copy and generat
  try{
   await pointerClick('.rule .row-menu > summary')
   const labels=await cdp.evaluate(`[...document.querySelectorAll('.rule .menu-panel button')].map(b=>b.textContent.trim())`)
-  assert.equal(labels[labels.indexOf('复制规则 ID')+1],'复制完整链接命令')
-  await screenshot('mapping-command-light.png')
-  await click('复制完整链接命令','.rule .row-menu')
+  assert.ok(!labels.includes('复制完整链接命令'));assert.ok(labels.includes('复制规则 ID'));await cdp.evaluate(`document.querySelector('.rule .row-menu').open=false`)
+  await screenshot('host-command-light.png')
+  await click('复制完整链接命令','.host-actions')
   await until(()=>cdp.evaluate(`document.querySelector('.notice')?.textContent.includes('完整链接命令已复制')`),'command copy success')
   const copied=await cdp.evaluate('window.commandCopied');assert.ok(copied.startsWith('ssh -N -T '));assert.equal((copied.match(/\s-L\s/g)||[]).length,1)
   assert.equal(await cdp.evaluate(`document.querySelector('.rule .row-menu').open`),false)
   await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});await cdp.evaluate(`document.documentElement.dataset.theme='dark'`)
-  await pointerClick('.rule .row-menu > summary');await screenshot('mapping-command-dark-narrow.png')
+  await screenshot('host-command-dark-narrow.png')
   assert.equal(await cdp.evaluate(`document.documentElement.scrollWidth<=innerWidth`),true)
   await cdp.evaluate(`document.querySelector('.rule .row-menu').open=false;document.documentElement.dataset.theme='light'`)
   await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false})
-  await cdp.evaluate(`window.fetch=async (...args)=>{if(args[1]?.body&&JSON.parse(args[1].body).action==='connectionCommand')return new Response(JSON.stringify({ok:false,error:'隔离命令生成失败'}));return window.commandOriginalFetch(...args)}`)
-  await pointerClick('.rule .row-menu > summary');await click('复制完整链接命令','.rule .row-menu')
+  await cdp.evaluate(`window.fetch=async (...args)=>{if(args[1]?.body&&JSON.parse(args[1].body).action==='hostCommand')return new Response(JSON.stringify({ok:false,error:'隔离命令生成失败'}));return window.commandOriginalFetch(...args)}`)
+  await click('复制完整链接命令','.host-actions')
   await until(()=>cdp.evaluate(`document.querySelector('main').textContent.includes('隔离命令生成失败')`),'generation error is visible')
   assert.equal(await cdp.evaluate('window.commandCopied'),copied);assert.equal(await cdp.evaluate(`!!document.querySelector('.notice')`),false)
   await cdp.evaluate(`window.fetch=window.commandOriginalFetch;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{write:async items=>{await items[0].getType('text/plain');throw Error('隔离剪贴板权限失败')}}})`)
-  await pointerClick('.rule .row-menu > summary');await click('复制完整链接命令','.rule .row-menu')
+  await click('复制完整链接命令','.host-actions')
   await until(()=>cdp.evaluate(`document.querySelector('main').textContent.includes('隔离剪贴板权限失败')`),'clipboard denial is visible')
  }finally{
   await cdp.evaluate(`window.fetch=window.commandOriginalFetch;if(window.commandClipboardDescriptor)Object.defineProperty(navigator,'clipboard',window.commandClipboardDescriptor);else delete navigator.clipboard`)
   await cdp.evaluate(`(()=>{const error=[...document.querySelectorAll('.message.error')].find(el=>el.textContent.includes('隔离剪贴板权限失败'));error?.querySelector('button')?.click()})()`)
+ }
+})
+await check('host selection scopes normal launch, copied command and Ctrl terminal without cross-host leakage',async()=>{
+ const original=(await api('status')).config,c=structuredClone(original),h=c.hosts[0],r=c.rules[0]
+ c.rules.push({...r,id:'host-choice-two',name:'第二条映射',port:await freePort()})
+ c.hosts.push({...h,id:'host-choice-other',name:'另一台主机'})
+ c.rules.push({...r,id:'host-choice-other-rule',hostId:'host-choice-other',name:'其他主机映射',port:await freePort()})
+ await api('save',{config:c,revision:(await api('status')).revision})
+ await until(()=>cdp.evaluate(`document.querySelectorAll('.rule input[type=checkbox]').length===3`),'host selection fixture')
+ await cdp.evaluate(`(()=>{window.scopeFetch=window.fetch;window.scopeClipboard=Object.getOwnPropertyDescriptor(navigator,'clipboard');window.scopeRequests=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{write:async items=>window.scopeCopied=await(await items[0].getType('text/plain')).text(),writeText:async text=>window.scopeCopied=text}});window.fetch=(url,options)=>{const q=options?.body&&JSON.parse(options.body);if(q?.action==='ensure'||q?.action==='hostTerminal'){window.scopeRequests.push(q);return Promise.resolve(new Response(JSON.stringify({ok:true,value:q.action==='ensure'?{ready:true,results:[]}:{opened:true}})))}return window.scopeFetch(url,options)}})()`)
+ const host=`.host[data-sort-id="${h.id}"]`,other='.host[data-sort-id="host-choice-other"]'
+ const control=type=>cdp.command('Input.dispatchKeyEvent',{type,key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,modifiers:type==='keyDown'?2:0})
+ const choose=selector=>cdp.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`)
+ try{
+  await choose(host+' .rule[data-sort-id="host-choice-two"] input')
+  await until(()=>cdp.evaluate(`document.querySelector('${host} .host-launch').title.includes('所选 1')`))
+  await choose(host+' .host-copy-command');await until(()=>cdp.evaluate(`Boolean(window.scopeCopied)`))
+  const copied=await cdp.evaluate('window.scopeCopied');assert.ok(copied.includes(String(c.rules[1].port)+':'));assert.ok(!copied.includes(String(r.port)+':'))
+  await choose(host+' .host-launch');await until(()=>cdp.evaluate(`window.scopeRequests.length===1`))
+  const normal=await cdp.evaluate('window.scopeRequests[0]');assert.deepEqual(normal.request.ruleIds,['host-choice-two']);assert.equal(normal.request.includeInherited,false)
+  await until(()=>cdp.evaluate(`!document.querySelector('${host} .host-launch').disabled`))
+  await control('keyDown');assert.equal(await cdp.evaluate(`document.querySelector('${host} .host-launch').classList.contains('external-launch')`),true)
+  assert.match(await cdp.evaluate(`document.querySelector('${host} .host-launch').title`),/外部终端.*所选 1/)
+  assert.equal(await cdp.evaluate(`getComputedStyle(document.querySelector('${host} .host-launch'),'::after').animationName`),'terminal-pulse')
+  await screenshot('host-ctrl-light.png')
+  await cdp.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]})
+  assert.equal(await cdp.evaluate(`getComputedStyle(document.querySelector('${host} .host-launch'),'::after').animationName`),'none')
+  await cdp.command('Emulation.setEmulatedMedia',{features:[]})
+  await choose(host+' .host-launch');await until(()=>cdp.evaluate(`window.scopeRequests.length===2`));await control('keyUp')
+  const terminal=await cdp.evaluate('window.scopeRequests[1]');assert.equal(terminal.action,'hostTerminal');assert.deepEqual(terminal.ruleIds,normal.request.ruleIds);assert.equal(terminal.hostId,h.id)
+  await until(()=>cdp.evaluate(`!document.querySelector('${host} .host-launch').disabled`))
+  assert.equal(await cdp.evaluate(`document.querySelector('${host} .host-launch').classList.contains('external-launch')`),false)
+  await control('keyDown');await cdp.evaluate(`window.dispatchEvent(new Event('blur'))`)
+  assert.equal(await cdp.evaluate(`document.querySelector('${host} .host-launch').classList.contains('external-launch')`),false);await control('keyUp')
+  await choose(host+' .rule[data-sort-id="host-choice-two"] input');await choose(other+' .rule input')
+  await until(()=>cdp.evaluate(`document.querySelector('${host} .host-launch').title.includes('全部 2')`))
+  await cdp.evaluate('window.scopeCopied=""');await choose(host+' .host-copy-command');await until(()=>cdp.evaluate(`Boolean(window.scopeCopied)`))
+  assert.equal(((await cdp.evaluate('window.scopeCopied')).match(/\s-L\s/g)||[]).length,2)
+  await choose(host+' .host-launch');await until(()=>cdp.evaluate(`window.scopeRequests.length===3`))
+  assert.deepEqual((await cdp.evaluate('window.scopeRequests[2]')).request.ruleIds,[r.id,'host-choice-two'])
+  await until(()=>cdp.evaluate(`!document.querySelector('${host} .host-launch').disabled`))
+  await cdp.command('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});await cdp.evaluate(`document.documentElement.dataset.theme='dark'`);await control('keyDown');await screenshot('host-ctrl-dark-narrow.png');assert.equal(await cdp.evaluate(`document.documentElement.scrollWidth<=innerWidth`),true);await control('keyUp')
+ }finally{
+  await control('keyUp');await cdp.evaluate(`window.fetch=window.scopeFetch;if(window.scopeClipboard)Object.defineProperty(navigator,'clipboard',window.scopeClipboard);else delete navigator.clipboard;document.documentElement.dataset.theme='light'`)
+  await cdp.command('Emulation.setDeviceMetricsOverride',{width:1180,height:840,deviceScaleFactor:1,mobile:false})
+  await api('save',{config:original,revision:(await api('status')).revision});await until(()=>cdp.evaluate(`document.querySelectorAll('.registered').length===1`))
  }
 })
 await check('row menus dismiss outside, switch exclusively, close on Escape and preserve actions',async()=>{
@@ -230,6 +276,6 @@ await check('WSL file chooser browses native paths, cancels without history and 
  await click('Windows','.environment');await click('WSL · '+distro,'.environment-options',true);await until(()=>cdp.evaluate(`document.querySelector('.environment button')?.textContent.includes('WSL')`));await click('设置','nav');await cdp.evaluate(`document.querySelector('button[aria-label="选择文件"]').click()`);await until(()=>cdp.evaluate(`!!document.querySelector('.file-browser[open]')`));await fill('目录路径',native.slice(0,native.lastIndexOf('/')),'.file-browser');await click('打开目录','.file-browser');await until(()=>cdp.evaluate(`document.querySelector('.file-browser-list')?.textContent.includes('wsl-browser-file')`));await screenshot('wsl-file-browser.png');await click('取消','.file-browser');await cdp.evaluate(`document.querySelector('button[aria-label="选择文件"]').click()`);await until(()=>cdp.evaluate(`!!document.querySelector('.file-browser[open]')`));await fill('目录路径',native.slice(0,native.lastIndexOf('/')),'.file-browser');await click('打开目录','.file-browser');await until(()=>cdp.evaluate(`document.querySelector('.file-browser-list')?.textContent.includes('wsl-browser-file')`));await cdp.evaluate(`[...document.querySelectorAll('.file-browser-list button')].find(b=>b.textContent.includes('wsl-browser-file')).click()`);await until(()=>cdp.evaluate(`document.querySelector('.files-panel textarea')?.value==='WSL browser content'`));await screenshot('wsl-file-open.png');
 })
 assert.deepEqual(exceptions,[])
-console.log(JSON.stringify({passed,root,screenshots:['mapping-command-light.png','mapping-command-dark-narrow.png','keys-light.png','keys-dark-narrow.png','settings-light.png','terminal-light.png','host-menu-light.png','hosts-light.png','plan-editor-light.png','plans-light.png','dark-narrow.png','host-menu-dark-narrow.png','editor-dark-narrow.png','help-light.png','help-dark-narrow.png']},null,2))
+console.log(JSON.stringify({passed,root,screenshots:['host-command-light.png','host-command-dark-narrow.png','host-ctrl-light.png','host-ctrl-dark-narrow.png','keys-light.png','keys-dark-narrow.png','settings-light.png','terminal-light.png','host-menu-light.png','hosts-light.png','plan-editor-light.png','plans-light.png','dark-narrow.png','host-menu-dark-narrow.png','editor-dark-narrow.png','help-light.png','help-dark-narrow.png']},null,2))
 }catch(e){try{console.error(await cdp.evaluate(`document.body.innerText`));await screenshot('failure.png')}catch{}throw e}
 finally{cdp?.close();edge.kill();for(const client of clients)client.end();sshd.close();echo.close();proc.stdin.end();await until(()=>proc.exitCode!==null,'Tether shutdown',10000).catch(()=>proc.kill())}

@@ -83,6 +83,36 @@ let passed=0
 async function check(name,fn){await fn();passed++;console.log('PASS '+name)}
 try{
  assert.equal((await api('status')).configError,null)
+ await check('host export uses exactly the selected forwards, saved order and launch overrides',async()=>{
+  const before=connections,value=await api('hostCommand',{hostId:'h',ruleIds:['other','local','local'],overrides:['Compression=no']})
+  assert.deepEqual(forwards(value),['-L','-L']);assert.ok(value.args.includes(`127.0.0.1:${ports[0]}:127.0.0.1:${echoPort}`));assert.ok(!value.command.includes(ports[1]+':'))
+  assert.match(inspectCommand(value),/compression no/);assert.equal(connections,before)
+  const process=launch(value)
+  try{await ready(process,ports[0]);await ready(process,ports[2]);await echoTest(ports[0]);await echoTest(ports[2]);assert.equal(await reachable(ports[1]),false)}finally{await stop(process)}
+  assert.deepEqual(forwards(await api('hostCommand',{hostId:'h'})),['-L','-L','-R','-D'])
+  await assert.rejects(api('hostCommand',{hostId:'h',ruleIds:['jump']}),/不属于当前主机/)
+  await assert.rejects(api('hostCommand',{hostId:'h',ruleIds:['unknown']}),/已不存在/)
+  await assert.rejects(api('hostCommand',{hostId:'missing'}),/主机不存在/)
+ })
+ await check('exact manual selection excludes inherited config forwards while preserving incremental reuse',async()=>{
+  const result=await api('ensure',{request:{ruleIds:['local'],includeInherited:false}});assert.equal(result.ready,true,JSON.stringify(result))
+  const first=(await api('status')).groups.find(g=>g.rules.some(r=>r.id==='local'));assert.deepEqual(first.rules.map(r=>r.id),['local']);assert.equal(await reachable(ports[1]),false)
+  const again=await api('ensure',{request:{ruleIds:['local','other'],includeInherited:false}});assert.equal(again.ready,true,JSON.stringify(again))
+  assert.equal((await api('status')).groups.find(g=>g.id===first.id).pid,first.pid);await echoTest(ports[2])
+  await assert.rejects(api('hostCommand',{hostId:'h',ruleIds:['local'],checkAvailable:true}),/已有托管连接/)
+  await api('stop',{scope:'all'})
+ })
+ if(win)await check('external host launch forwards the selected batch and refuses occupied listeners',async()=>{
+  let terminal
+  try{
+   terminal=await api('hostTerminal',{hostId:'h',ruleIds:['local','other']});assert.equal(terminal.opened,true);assert.ok(terminal.terminalPid>0)
+   await waitFor(()=>reachable(ports[0]));await waitFor(()=>reachable(ports[2]));await echoTest(ports[0]);await echoTest(ports[2]);assert.equal(await reachable(ports[1]),false)
+   assert.equal((await api('status')).groups.length,0)
+   await assert.rejects(api('hostTerminal',{hostId:'h',ruleIds:['local']}),/占用|已有外部连接/)
+   await api('stop',{scope:'all'});await echoTest(ports[0])
+  }finally{if(terminal)execFileSync('taskkill.exe',['/PID',String(terminal.terminalPid),'/T','/F'],{stdio:'ignore'})}
+  await waitFor(async()=>!await reachable(ports[0])&&!await reachable(ports[2]))
+ })
  await check('unstarted rule exports exactly one forward and generation opens no SSH connection',async()=>{
   const before=connections,value=await api('connectionCommand',{ruleId:'local'})
   assert.deepEqual(forwards(value),['-L']);assert.equal(value.shell,win?'PowerShell':'POSIX');assert.ok(value.command.startsWith('ssh -N -T '));assert.ok(!value.command.includes('Start-Process'))

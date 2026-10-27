@@ -15,11 +15,12 @@ const sshd=new ssh2.Server({hostKeys:[hostKey]},client=>{clients.add(client);cli
 const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)))
 const sshPort=await listen(sshd),echo=net.createServer(s=>{s.on('error',()=>{});s.pipe(s)}),echoPort=await listen(echo)
 const free=net.createServer();const managedPort=await listen(free);await new Promise(r=>free.close(r))
+const terminalPorts=[];for(let i=0;i<2;i++){const s=net.createServer();terminalPorts.push(await listen(s));await new Promise(r=>s.close(r))}
 const config=path.join(root,'config');await writeFile(config,`Host fixture\n HostName 127.0.0.1\n Port ${sshPort}\n User fixture\n IdentityFile ${key}\n IdentitiesOnly yes\n UserKnownHostsFile ${root}/known_hosts\n StrictHostKeyChecking accept-new\n`)
 const externalSlot=net.createServer(),externalPort=await listen(externalSlot);await new Promise(r=>externalSlot.close(r));const external=spawn('ssh',['-NT','-o','ExitOnForwardFailure=yes','-F',config,'-L',`127.0.0.1:${externalPort}:127.0.0.1:${echoPort}`,'fixture'],{stdio:'ignore'})
 const socket=path.join(root,'agent.sock'),agent=spawn('ssh-agent',['-D','-a',socket],{stdio:'ignore'})
 const probe=port=>new Promise(resolve=>{const s=net.connect(port,'127.0.0.1',()=>s.write('fixture'));s.setTimeout(1000,()=>{s.destroy();resolve(false)});s.once('data',b=>{s.destroy();resolve(b.toString()==='fixture')});s.on('error',()=>resolve(false));s.once('close',()=>resolve(false))})
 for(let i=0;i<100&&!await probe(externalPort);i++)await new Promise(r=>setTimeout(r,50))
-console.log(JSON.stringify({root,key,config,managedPort,externalPort,echoPort,socket,externalPid:external.pid}))
-try{for await(const line of readline.createInterface({input:process.stdin})){const v=JSON.parse(line);console.log(JSON.stringify({id:v.id,managed:await probe(managedPort),external:await probe(externalPort)}))}}
+console.log(JSON.stringify({root,key,config,managedPort,externalPort,terminalPorts,echoPort,socket,externalPid:external.pid}))
+try{for await(const line of readline.createInterface({input:process.stdin})){const v=JSON.parse(line);console.log(JSON.stringify({id:v.id,managed:await probe(managedPort),external:await probe(externalPort),terminal:await Promise.all(terminalPorts.map(probe))}))}}
 finally{external.kill();agent.kill();for(const c of clients)c.end();sshd.close();echo.close()}

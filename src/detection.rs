@@ -324,7 +324,7 @@ pub async fn test(rt: &Arc<Runtime>, host: &Host) -> Vec<Check> {
                             }
                             Ok(None) => check.reason.push_str("；运行中的 WSL 未能证明该端点归属"),
                             Err(e) => {
-                                check.reason.push_str("；");
+                                check.reason.push('；');
                                 check.reason.push_str(&e);
                             }
                         }

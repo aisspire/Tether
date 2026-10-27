@@ -56,8 +56,10 @@
 | save | `config`、`revision`；成功后才更新内存 |
 | preview / test | `hostId` 或完整 `host` 草稿、可选 `overrides`；生效参数 / 目标 TCP 响应，不保存草稿 |
 | connectionCommand | `ruleId`、临时项可选 `groupId`；返回 `{program,args,command,shell}`，只生成当前映射的终端命令，不启动或复用连接 |
+| hostCommand | `hostId`、可选 `ruleIds`、`overrides`；返回同样的程序、结构化参数与直接 SSH 文本，未指定或空选择时使用该主机全部已登记映射 |
+| hostTerminal | 同 hostCommand，另按 `environment` 路由；Windows 入口打开外部控制台，返回 `{opened,environment,terminalPid}`；不会建立托管组 |
 | dismiss | `groupId`；只移除已结束且无进程、无重连意图的失败记录，拒绝活动连接 |
-| ensure | `request: {ruleIds?, temporary?, overrides?, planId?, consumer?}` |
+| ensure | `request: {ruleIds?, temporary?, overrides?, planId?, consumer?, includeInherited?}` |
 | stop | `scope: group/host/all`，前两者需 `id` |
 | shutdown | 拒绝新动作、取消认证与重连、停止本实例托管资源并退出 |
 | answer / cancelPrompt | `id`、`answer` / `id`；认证回答 / 取消；不持久保存回答 |
@@ -71,11 +73,21 @@
 
 `ensure` 返回 `{instance, ready, results}`；每项含 `ruleId`、可选 `groupId`、`state`、`reused` 和 `error`。只有本次所有规则都确认 `running` 时 `ready: true`。`failed`、`pending`、`conflict`、`stopped`、`timeout`、`unverified` 均不满足前置依赖。资源等待不检测远端业务 HTTP 健康。
 
-## 单条映射完整链接命令（2026-10-24）
+## 主机批量命令与外部终端（2026-10-27）
+
+主机启动、命令复制与 Ctrl 外部启动按主机分别计算范围：本主机有勾选时取勾选 ID，否则取全部已登记映射。计算不依赖搜索／状态筛选，也不包含其他主机或只存在于运行组内的临时项。前端按当前配置顺序发送显式 ID，后端校验所属主机和引用仍存在、去重并保持配置顺序；无效 ID 不回退成全部启动。包含重复监听端点的选择明确拒绝。
+
+`hostCommand` 只接受主机／映射身份和参数覆盖，不接受前端程序或任意命令。读取已保存主机配置，将 `overrides` 放在主机覆盖前，与普通启动采用相同优先级。一个主机形成同一份连接快照，单条 SSH 命令可包含多项 `-L`／`-R`／`-D`，不自动带入 SSH config 的来源转发。普通主机启动和页面“启动所选”传 `includeInherited:false`，仅补充范围内的缺失转发，复用与参数待应用规则仍有效；该字段省略时保留现有前置依赖、计划及其他调用的来源转发语义，重试保留原范围策略。
+
+`hostTerminal` 由 Windows 环境 Hub 分发；所选环境生成 `hostCommand` 并启用 `checkAvailable:true`，检查托管连接、可辨识外部 SSH 与本地／SOCKS 监听占用，冲突时整个外部批次拒绝。检测不保证消除操作系统级竞态，远程监听仍由 SSH 的失败策略核验。已有连接不自动转换成外部终端连接，也不为外部启动停止原连接。
+
+Hub 用本程序的终端辅助入口及 Windows 新控制台启动外部 PowerShell，标准句柄独立于后台 stdio，不加入托管 Job；一次性环境值传递生成的程序／参数，参数以原生 argv 执行，不重新解析复制文本。WSL 使用环境登记中的发行版和用户，经 `wsl.exe --distribution ... --user ... --exec ...` 调用 Linux SSH；路径、身份文件与 Agent 参数由该环境生成。一次性配置与 Tether askpass 身份不传给 SSH，认证交给终端；辅助入口报告退出码，PowerShell 保持打开。`terminalPid` 仅描述刚创建的终端，不作为托管或清理依据；停止、重连和退出不接管这些外部连接。独立 Linux 后台可生成 POSIX 命令，打开外部终端需通过 Windows 入口。
+
+旧 `connectionCommand` 保留为单项接口兼容入口，界面已移除该入口；以下为命令生成共用的参数与引用契约。
 
 `connectionCommand` 通过现有环境会话路由，读取当前环境的已登记规则及其已保存主机；规则仍登记时不使用旧组参数或页面里的本次启动覆盖。未登记但仍有运行记录的临时项／SSH 配置来源项使用所属组的规则及快照，传入 `groupId` 可指定该组；已消失的引用返回错误。
 
-导出默认以 `ssh -N -T` 开头，使用 `-F none`、仅一项 `-L`／`-R`／`-D` 与必要连接参数。基于同一 OpenSSH 客户端的无配置默认值生成差异参数，再以 `ssh -G` 回读核对非转发参数，保留有序重复身份项、IPv6 和路径引号。端口和用户使用 `-p`、`-l`，无延迟展开且文件存在的身份路径使用 `-i`；其他身份路径仍保留 `-o IdentityFile=...`，避免 `-i` 提前展开 `~` 或丢弃不存在的身份。其他选项使用 `-o key=value`。内部就绪日志级别改为普通 `INFO`；保活和仅转发设置保留。Agent socket 已绑定且未显式指定其他 IdentityAgent 时写入对应参数，不导出问答口令、私钥内容或后台调用身份。
+导出默认以 `ssh -N -T` 开头，使用 `-F none`、所选范围对应的 `-L`／`-R`／`-D` 与必要连接参数。基于同一 OpenSSH 客户端的无配置默认值生成差异参数，再以 `ssh -G` 回读核对非转发参数，保留有序重复身份项、IPv6 和路径引号。端口和用户使用 `-p`、`-l`，无延迟展开且文件存在的身份路径使用 `-i`；其他身份路径仍保留 `-o IdentityFile=...`，避免 `-i` 提前展开 `~` 或丢弃不存在的身份。其他选项使用 `-o key=value`。内部就绪日志级别改为普通 `INFO`；保活和仅转发设置保留。Agent socket 已绑定且未显式指定其他 IdentityAgent 时写入对应参数，不导出问答口令、私钥内容或后台调用身份。
 
 ProxyJump 按已有逐跳快照展开为嵌套 `ProxyCommand`，每跳保留自己的参数，以 `-W` 转递上层连接，并单独设置标准输入与清除转发；不依赖组的临时文件，不将目标身份覆盖套给跳板。由于改写会改变 `%j` 与 `%C` 的含义，跳板上下文内使用这些 token 的参数明确拒绝。原有配置快照的不支持边界仍适用；生成可能显式解析原始配置，因此仍可能执行用户原有 `Match exec`，不在状态轮询中运行。
 

@@ -83,6 +83,7 @@ pub struct Hub {
     registry: Mutex<Registry>,
     sessions: tokio::sync::Mutex<HashMap<String, Arc<Bridge>>>,
     selection: tokio::sync::Mutex<()>,
+    terminal_gate: tokio::sync::Mutex<()>,
 }
 impl Hub {
     pub fn new(local: Arc<Runtime>, data: PathBuf) -> Result<Arc<Self>> {
@@ -110,6 +111,7 @@ impl Hub {
             registry: Mutex::new(registry),
             sessions: tokio::sync::Mutex::default(),
             selection: tokio::sync::Mutex::new(()),
+            terminal_gate: tokio::sync::Mutex::new(()),
         }))
     }
     fn persist(&self, r: &Registry) -> Result<()> {
@@ -283,6 +285,35 @@ impl Hub {
             .as_str()
             .unwrap_or(&self.local.environment)
             .to_owned();
+        if action == "hostTerminal" {
+            let _gate = self.terminal_gate.lock().await;
+            v["action"] = json!("hostCommand");
+            v["checkAvailable"] = json!(true);
+            v.as_object_mut().unwrap().remove("environment");
+            let (command, environment) = if env == self.local.environment {
+                (self.local.action(v).await?, None)
+            } else {
+                let session = self.session(&env).await?;
+                let environment = self
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .environments
+                    .iter()
+                    .find(|e| e.id == env)
+                    .cloned()
+                    .ok_or("未知环境，请重新选择")?;
+                (session.call(v).await?, Some(environment))
+            };
+            if *self.local.shutdown.borrow() {
+                return Err("后台正在退出，已取消终端启动".into());
+            }
+            let terminal_pid = crate::terminal::open(
+                serde_json::from_value(command).map_err(|e| e.to_string())?,
+                environment.as_ref(),
+            )?;
+            return Ok(json!({"opened":true,"environment":env,"terminalPid":terminal_pid}));
+        }
         if action == "files.choose" {
             if env == self.local.environment {
                 if !cfg!(windows) {

@@ -654,3 +654,9 @@ button.sort-handle:active { cursor: grabbing; }
   .rule-name, .rule-endpoint, .rule-summary > .status { grid-column: 1; }
   .rule-actions { grid-column: 1; order: 1; }
 }
+
+/* Ctrl changes the host launch mode without moving adjacent actions. */
+.host-launch.external-launch { position: relative; background: var(--accent-soft); color: var(--accent); }
+.host-launch.external-launch:not(:disabled)::after { content: ""; position: absolute; inset: -3px; border: 1px solid var(--accent); border-radius: inherit; pointer-events: none; animation: terminal-pulse 1.4s ease-out infinite; }
+@keyframes terminal-pulse { from { transform: scale(.9); opacity: .7; } to { transform: scale(1.15); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .host-launch.external-launch::after { animation: none; opacity: .5; } }
